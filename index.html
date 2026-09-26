@@ -594,7 +594,7 @@ document.addEventListener("error", function(e){
         </ul>
         <img src="guide-images/13-ocr.png" alt="The OCR window: the picture on the left, the table it read on the right" data-guide-fallback="Screenshot: the OCR window">
         <p style="margin-top:14px;">Tips: if the picture has lots of other things around the table, click <b>✂ Select area</b> and draw a box around just the part you want — it's faster and more accurate. Use the rotate buttons if a photo is sideways. For the best result from a blurry screen, zoom in before taking the screenshot.</p>
-        <p>The first time you use OCR it downloads its reading engine, so it needs internet and takes a little longer. After that it's saved on this computer. Your image is never uploaded anywhere — all the reading happens on your own computer.</p>
+        <p>The reading models are bundled with this page, so OCR works even with no internet at all. Just a small helper script loads fresh from the internet each time you open the page (a few seconds, one time per visit). Your image is never uploaded anywhere — all the reading happens on your own computer.</p>
       </div>
     </details>
 
@@ -2168,8 +2168,18 @@ document.addEventListener("error", function(e){
       var hit = await cache.match(url);
       if (hit) return await hit.arrayBuffer();
     } catch(e){ cache = null; }
-    var urls = [url];
     var m = /\/resolve\/main\/(.+)$/.exec(url);
+    // These free OCR models are hosted on huggingface.co, which sets a CORS header
+    // that blocks the small dictionary files (not the big model files, oddly) from
+    // being fetched by any other website — so that one file always fails to load
+    // here, on every computer, everywhere, regardless of internet connection. To
+    // fix it for good (and so nothing depends on huggingface.co or github.com being
+    // reachable on someone's network), the same free model files are bundled in the
+    // "ocr-models" folder next to this page and tried first; the original free
+    // source and its GitHub mirror are kept only as a backup.
+    var urls = [];
+    if (m) urls.push("ocr-models/" + m[1]);
+    urls.push(url);
     if (m) urls.push(OCR_MODEL_MIRROR + "/" + m[1]);
     var lastErr = null;
     for (var i = 0; i < urls.length; i++){
@@ -3128,7 +3138,8 @@ document.addEventListener("error", function(e){
       console.error(err);
       ocrHideStatus();
       var msg = err && err.message ? err.message : String(err);
-      if (/Failed to fetch|NetworkError|HTTP \d|download failed|import/i.test(msg)) msg = "Couldn't download the reading engine — check your internet connection and try again (after the first successful run it's saved on this computer).";
+      if (/Failed to fetch|NetworkError|HTTP \d|download failed/i.test(msg)) msg = "Couldn't load the OCR model files. Make sure the \"ocr-models\" folder was uploaded next to index.html (same as the guide-images folder) — that's the usual cause. If it's there, check your internet connection and try again.";
+      else if (/import/i.test(msg)) msg = "Couldn't load the reading engine — check your internet connection and try again (this one small file needs to load fresh each time; the OCR models themselves are bundled and work offline).";
       showMsg("ocrMsg", msg, false);
     } finally {
       ocr.busy = false;
