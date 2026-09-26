@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CSV Maker</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%234f46e5'/%3E%3Cstop offset='1' stop-color='%237c3aed'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='url(%23g)'/%3E%3Ctext x='32' y='41' font-family='Arial,sans-serif' font-size='22' font-weight='700' fill='white' text-anchor='middle'%3ECSV%3C/text%3E%3C/svg%3E">
 <script>
 // Armed as early as possible (image requests fire the moment the HTML parser sees an
 // <img> tag, long before a script at the bottom of the page could listen for the
@@ -22,6 +23,11 @@ document.addEventListener("error", function(e){
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/driver.js@1.8.0/dist/driver.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/driver.js@1.8.0/dist/driver.js.iife.js"></script>
+<script type="importmap">{"imports":{
+  "onnxruntime-web":"https://cdn.jsdelivr.net/npm/onnxruntime-web@1.26.0/dist/ort.all.bundle.min.mjs",
+  "ppu-ocv/web":"https://cdn.jsdelivr.net/npm/ppu-ocv@4.0.0/index.web.js",
+  "ppu-ocv/canvas-web":"https://cdn.jsdelivr.net/npm/ppu-ocv@4.0.0/index.canvas-web.js"
+}}</script>
 <style>
   :root{
     --bg:#f2f3f6;
@@ -235,7 +241,7 @@ document.addEventListener("error", function(e){
   .csv-table tbody tr.row-warn:hover td{background:color-mix(in srgb, var(--warn) 12%, transparent);}
 
 
-  .backdrop{position:fixed;inset:0;background:rgba(10,12,16,.45);display:none;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;z-index:50;}
+  .backdrop{position:fixed;inset:0;background:rgba(10,12,16,.45);display:none;align-items:flex-start;justify-content:center;padding:calc(var(--topbar-h, 96px) + 16px) 16px calc(var(--bottombar-h, 64px) + 16px);overflow-y:auto;z-index:50;}
   .backdrop.open{display:flex;}
   .panel{background:var(--surface);border:1px solid var(--border);border-radius:14px;max-width:640px;width:100%;padding:22px;position:relative;}
   .panel h2{margin:0 0 2px;font-size:16px;}
@@ -299,6 +305,70 @@ document.addEventListener("error", function(e){
   .guide-body code{font-family:var(--mono);font-size:12px;background:var(--surface-2);padding:1px 5px;border-radius:4px;}
   .guide-body img{display:block;width:100%;border-radius:8px;border:1px solid var(--border);margin-top:8px;background:var(--surface-2);}
   .guide-img-fallback{display:flex;align-items:center;justify-content:center;text-align:center;height:130px;background:var(--surface-2);border:1px dashed var(--border);border-radius:8px;color:var(--text-muted);font-size:12px;margin-top:8px;padding:10px;}
+  /* ---------- OCR ---------- */
+  .ocr-panel{max-width:1320px;width:100%;}
+  .ocr-panel [hidden]{display:none !important;}
+  .ocr-drop{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center;
+    border:2px dashed var(--border);border-radius:12px;padding:44px 20px;cursor:pointer;color:var(--text-muted);font-size:13px;background:var(--bg);
+    transition:border-color .15s ease, background .15s ease;}
+  .ocr-drop:hover, .ocr-drop.drag{border-color:var(--accent);background:color-mix(in srgb, var(--accent) 5%, var(--bg));color:var(--text);}
+  .ocr-drop input{display:none;}
+  .ocr-drop-icon{font-size:34px;}
+  .ocr-drop-main b{color:var(--text);}
+  .ocr-drop-sub{font-size:11.5px;}
+  kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--border);border-bottom-width:2px;border-radius:4px;padding:0 5px;background:var(--surface);color:var(--text);}
+  .ocr-work{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:18px;align-items:start;}
+  .ocr-work[hidden]{display:none;}
+  .ocr-left, .ocr-right{min-width:0;display:flex;flex-direction:column;gap:10px;}
+  .ocr-toolbar, .ocr-settings, .ocr-grid-tools, .ocr-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+  .ocr-settings label{display:flex;flex-direction:column;gap:3px;font-size:11px;color:var(--text-muted);}
+  .ocr-settings select{font-family:var(--sans);font-size:12.5px;color:var(--text);background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:6px 8px;}
+  .ocr-settings label.ocr-check, .ocr-check{flex-direction:row;display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-muted);cursor:pointer;}
+  .ocr-check input{accent-color:var(--accent);}
+  #ocrRun{margin-left:auto;}
+  .ocr-stage{position:relative;border:1px solid var(--border);border-radius:10px;overflow:auto;max-height:56vh;background:
+    repeating-conic-gradient(var(--surface-2) 0 25%, var(--surface) 0 50%) 0 0/16px 16px;}
+  .ocr-stage canvas{display:block;width:100%;height:auto;}
+  #ocrOverlay{position:absolute;inset:0;pointer-events:none;}
+  .ocr-stage.cropping{cursor:crosshair;}
+  .ocr-sel{position:absolute;border:2px solid var(--accent);background:color-mix(in srgb, var(--accent) 12%, transparent);pointer-events:none;border-radius:2px;}
+  .ocr-stage-hint{font-size:11.5px;color:var(--text-muted);}
+  .ocr-progress{display:flex;flex-direction:column;gap:5px;}
+  .ocr-progress[hidden]{display:none;}
+  .ocr-bar{height:6px;border-radius:999px;background:var(--surface-2);overflow:hidden;}
+  .ocr-bar span{display:block;height:100%;width:0;background:var(--grad-brand);border-radius:999px;transition:width .25s ease;}
+  .ocr-status{font-size:12px;color:var(--text-muted);}
+  .ocr-tabs{display:flex;align-items:center;gap:4px;border-bottom:1px solid var(--border);}
+  .ocr-tab{font-family:var(--sans);font-size:12.5px;font-weight:600;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);padding:7px 12px;cursor:pointer;margin-bottom:-1px;}
+  .ocr-tab.active{color:var(--accent);border-bottom-color:var(--accent);}
+  .ocr-summary{margin-left:auto;font-size:11.5px;color:var(--text-muted);}
+  .ocr-empty{border:1px dashed var(--border);border-radius:10px;padding:40px 16px;text-align:center;color:var(--text-muted);font-size:13px;}
+  .ocr-empty[hidden], .ocr-pane[hidden], .ocr-actions[hidden]{display:none;}
+  .ocr-grid-wrap{overflow:auto;max-height:52vh;border:1px solid var(--border);border-radius:10px;outline:none;}
+  .ocr-grid-wrap:focus-visible{box-shadow:0 0 0 2px var(--accent);}
+  .ocr-grid{border-collapse:separate;border-spacing:0;border:none;border-radius:0;width:max-content;min-width:100%;user-select:none;font-size:12.5px;}
+  .ocr-grid th{position:sticky;top:0;z-index:2;background:var(--surface-2);color:var(--text-muted);font-weight:600;font-size:11px;
+    padding:5px 8px;border-bottom:1px solid var(--border);border-right:1px solid var(--border);cursor:pointer;text-align:center;letter-spacing:0;text-transform:none;}
+  .ocr-grid th.rowh{position:sticky;left:0;z-index:1;min-width:34px;}
+  .ocr-grid th.corner{left:0;z-index:3;}
+  .ocr-grid td{padding:6px 9px;border-bottom:1px solid var(--border);border-right:1px solid var(--border);vertical-align:top;
+    max-width:340px;min-width:44px;white-space:pre-wrap;word-break:break-word;cursor:cell;background:var(--surface);color:var(--text);}
+  .ocr-grid td.warn{background:var(--warn-soft);}
+  .ocr-grid td.fixed{box-shadow:inset 0 -2px 0 color-mix(in srgb, var(--accent-3) 70%, transparent);}
+  .ocr-grid td.sel{background:color-mix(in srgb, var(--accent) 16%, var(--surface));}
+  .ocr-grid td.sel.warn{background:color-mix(in srgb, var(--accent) 16%, var(--surface));box-shadow:inset 3px 0 0 var(--warn);}
+  .ocr-grid th.selh{background:color-mix(in srgb, var(--accent) 22%, var(--surface-2));color:var(--text);}
+  .ocr-grid td.editing{outline:2px solid var(--accent);outline-offset:-2px;cursor:text;user-select:text;background:var(--surface);}
+  .ocr-legend{font-size:11.5px;color:var(--text-muted);display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;}
+  .ocr-legend .lg{display:inline-flex;align-items:center;gap:5px;}
+  .ocr-legend .lg::before{content:"";width:14px;height:10px;border-radius:2px;}
+  .ocr-legend .lg-warn::before{background:var(--warn-soft);border:1px solid var(--warn);}
+  .ocr-legend .lg-fix::before{background:var(--surface);box-shadow:inset 0 -2px 0 var(--accent-3);border:1px solid var(--border);}
+  #ocrText{width:100%;min-height:46vh;font-family:var(--mono);font-size:12.5px;line-height:1.55;color:var(--text);background:var(--bg);
+    border:1px solid var(--border);border-radius:10px;padding:12px;resize:vertical;outline:none;white-space:pre;overflow:auto;}
+  #ocrText:focus{border-color:var(--accent);}
+  @media (max-width:900px){ .ocr-work{grid-template-columns:1fr;} .ocr-stage{max-height:40vh;} }
+
   @media (max-width:560px){
     .field-grid{grid-template-columns:1fr;}
     h1{font-size:16px;}
@@ -365,9 +435,10 @@ document.addEventListener("error", function(e){
         <span class="switch"></span>
         <span class="view-toggle-label">Custom column order</span>
       </label>
+      <button class="btn small" id="columnsBtn">⚙ Customize order</button>
     </div>
     <div class="export-group">
-      <button class="btn" id="columnsBtn">⚙ Customize order</button>
+      <button class="btn" id="ocrBtn" title="Read text or a table from a photo, scan or screenshot">📷 OCR</button>
       <button class="btn" id="pasteTableBtn">⎘ Paste table</button>
       <button class="btn" id="addRowBtn">+ Add row</button>
       <button class="btn" id="clearBookingBtn">Clear all</button>
@@ -375,7 +446,7 @@ document.addEventListener("error", function(e){
       <button class="btn primary" id="exportBookingXlsx">Export Excel</button>
     </div>
   </div>
-  <div class="section-note">Search above and click <b>Add</b> on any item, or click <b>+ Add row</b> for a blank line — new rows use your saved auto-fill defaults. Drag the ⠿ handle to reorder rows, or drag a cell's corner to fill values down. Paste a multi-line list into one cell to fill it down new rows, or click <b>⎘ Paste table</b> to import a whole multi-column table at once. Flip <b>Custom column order</b> to switch the view to Item Code, Price/Unit, Adj. Qty, Tracking no, Supplier Name, *Wastage, Booking %, Suggested buyer id first — click <b>⚙ Customize order</b> to rearrange it further and save. Exports follow whichever order is showing.</div>
+  <div class="section-note">Search above and click <b>Add</b> on any item, or click <b>+ Add row</b> for a blank line — new rows use your saved auto-fill defaults. Drag the ⠿ handle to reorder rows, or drag a cell's corner to fill values down. Paste a multi-line list into one cell to fill it down new rows, or click <b>⎘ Paste table</b> to import a whole multi-column table at once. Only have a picture? Click <b>📷 OCR</b> (or press Ctrl+V with a screenshot) to read a table or text from a screenshot, scan or photo. Flip <b>Custom column order</b> to switch the view to Item Code, Price/Unit, Adj. Qty, Tracking no, Supplier Name, *Wastage, Booking %, Suggested buyer id first — click <b>⚙ Customize order</b> to rearrange it further and save. Exports follow whichever order is showing.</div>
 
   <div class="table-scroll">
     <table class="csv-table" id="bookingTable">
@@ -508,14 +579,34 @@ document.addEventListener("error", function(e){
     </details>
 
     <details class="guide-section">
-      <summary>8. Reordering rows</summary>
+      <summary>8. Reading a table from a picture or screenshot (📷 OCR)</summary>
+      <div class="guide-body">
+        <p>Only have the booking details as a screenshot, a scanned page, or a phone photo? Click <b>📷 OCR</b> above the sheet.</p>
+        <p><b>Step 1 —</b> Click to choose the image, drag it in, or press <b>Ctrl+V</b> to paste a screenshot. (Pressing Ctrl+V with a screenshot anywhere on the page opens OCR by itself.) JPG, PNG, WEBP, BMP, GIF, HEIC (iPhone) and TIFF all work.</p>
+        <p><b>Step 2 —</b> It starts reading straight away. Small, blurry or low-resolution pictures are enlarged and sharpened first, read three times and the readings compared; tilted photos are straightened. Tables come back as real rows and columns — even cells with several lines of text.</p>
+        <p><b>Step 3 —</b> Look at the <b>yellow</b> cells: those are the ones it isn't sure about (hover one to see why). Double-click any cell to correct it.</p>
+        <p><b>Step 4 —</b> Take what you need:</p>
+        <ul style="margin:0 0 8px;padding-left:20px;">
+          <li>Click a cell, drag across several, or click a column letter / row number to select a whole column or row — then <b>Copy selected</b> (or Ctrl+C).</li>
+          <li><b>Copy whole table</b> copies everything — it pastes into Excel as proper columns.</li>
+          <li>The <b>Text</b> tab has everything as plain text; <b>⬇ CSV</b> / <b>⬇ Excel</b> download the table.</li>
+          <li><b>Add to booking sheet ➜</b> sends the table (or just the cells you selected) into the Paste table screen — check the column names it guessed, then import.</li>
+        </ul>
+        <img src="guide-images/13-ocr.png" alt="The OCR window: the picture on the left, the table it read on the right" data-guide-fallback="Screenshot: the OCR window">
+        <p style="margin-top:14px;">Tips: if the picture has lots of other things around the table, click <b>✂ Select area</b> and draw a box around just the part you want — it's faster and more accurate. Use the rotate buttons if a photo is sideways. For the best result from a blurry screen, zoom in before taking the screenshot.</p>
+        <p>The first time you use OCR it downloads its reading engine, so it needs internet and takes a little longer. After that it's saved on this computer. Your image is never uploaded anywhere — all the reading happens on your own computer.</p>
+      </div>
+    </details>
+
+    <details class="guide-section">
+      <summary>9. Reordering rows</summary>
       <div class="guide-body">
         <p>Every row has a <b>⠿</b> handle on its left. Click and hold it, then drag the row up or down to put it where you want.</p>
       </div>
     </details>
 
     <details class="guide-section">
-      <summary>9. Choosing which columns show, and their order</summary>
+      <summary>10. Choosing which columns show, and their order</summary>
       <div class="guide-body">
         <p>Next to the "Booking / PR sheet" title is a switch labelled <b>Custom column order</b>. Flip it on and the columns rearrange to a more useful order automatically.</p>
         <p>Want a different order, or want to hide a column you never use? Click <b>⚙ Customize order</b>. Drag the ⠿ handles to rearrange, untick a box to hide that column, then click <b>Save layout</b>. Your sheet — and anything you export — will always use this order while the switch is on.</p>
@@ -524,7 +615,7 @@ document.addEventListener("error", function(e){
     </details>
 
     <details class="guide-section">
-      <summary>10. Seeing what an item code actually is</summary>
+      <summary>11. Seeing what an item code actually is</summary>
       <div class="guide-body">
         <p>Hover your mouse over any Item Code box in the sheet (or click into it) — a small popup appears showing that item's Goods Name and full Description, so you can double check it's the right one without leaving the sheet.</p>
         <img src="guide-images/10-tooltip.png" alt="Hovering an Item Code cell and a popup showing its Goods Name and Description" data-guide-fallback="Screenshot: the item code hover popup">
@@ -532,7 +623,7 @@ document.addEventListener("error", function(e){
     </details>
 
     <details class="guide-section">
-      <summary>11. Auto-fill defaults — set it once, stop retyping it</summary>
+      <summary>12. Auto-fill defaults — set it once, stop retyping it</summary>
       <div class="guide-body">
         <p>If you type the same thing into the same box over and over — like Purchase Type always being "Generic", or Production Area always being "Stitching" — set it as a <b>default</b> once, and never type it again.</p>
         <p><b>Step 1 —</b> Click <b>⚙ Auto-fill defaults</b> at the top of the page. Fill in only the boxes you want to default — leave the rest empty. Click <b>Save defaults</b>.</p>
@@ -550,7 +641,7 @@ document.addEventListener("error", function(e){
     </details>
 
     <details class="guide-section">
-      <summary>12. Exporting your sheet</summary>
+      <summary>13. Exporting your sheet</summary>
       <div class="guide-body">
         <p>Click <b>Export CSV</b> or <b>Export Excel</b> above the sheet to download everything as a file you can open, email, or upload elsewhere.</p>
         <img src="guide-images/11-export.png" alt="Clicking Export CSV or Export Excel" data-guide-fallback="Screenshot: exporting the sheet">
@@ -558,7 +649,7 @@ document.addEventListener("error", function(e){
     </details>
 
     <details class="guide-section">
-      <summary>13. Admin: adding item codes or updating the whole catalog</summary>
+      <summary>14. Admin: adding item codes or updating the whole catalog</summary>
       <div class="guide-body">
         <p>The small <b>admin</b> link at the very bottom is only for updating the item code list itself (not your booking sheet). You can add one code manually, or upload updated files to replace the whole list.</p>
         <p>Anything you change here is saved to this browser, on this computer, only — it won't show up for anyone opening the link on their own computer unless you send them an updated file.</p>
@@ -579,6 +670,95 @@ document.addEventListener("error", function(e){
       <button class="btn primary" id="saveColumnsBtn">Save layout</button>
     </div>
     <div class="msg" id="columnsMsg"></div>
+  </div>
+</div>
+
+<div class="backdrop" id="ocrBackdrop">
+  <div class="panel ocr-panel">
+    <button class="close-x" id="closeOcr">✕</button>
+    <h2>📷 Image to text (OCR)</h2>
+    <div class="desc">Read a table or text from a photo, scan or screenshot — even blurry or low-resolution ones. Everything runs on this computer; your image is never uploaded anywhere.</div>
+
+    <label class="ocr-drop" id="ocrDrop" for="ocrFile">
+      <input type="file" id="ocrFile" accept="image/*,.heic,.heif,.tif,.tiff,.bmp,.webp,.avif,.jfif,.jpeg,.jpg,.png,.gif">
+      <div class="ocr-drop-icon">📷</div>
+      <div class="ocr-drop-main"><b>Click to choose an image</b>, drag one here, or press <kbd>Ctrl</kbd> + <kbd>V</kbd> to paste a screenshot</div>
+      <div class="ocr-drop-sub">JPG · PNG · WEBP · BMP · GIF · HEIC (iPhone) · TIFF</div>
+    </label>
+
+    <div class="ocr-work" id="ocrWork" hidden>
+      <div class="ocr-left">
+        <div class="ocr-toolbar">
+          <button class="btn small" id="ocrRotL" title="Rotate left">⟲ Rotate</button>
+          <button class="btn small" id="ocrRotR" title="Rotate right">⟳</button>
+          <button class="btn small" id="ocrCropBtn" title="Drag a box around just the part you want read">✂ Select area</button>
+          <button class="btn small" id="ocrCropClear" hidden>Use whole image</button>
+          <button class="btn small" id="ocrNewImg">Change image</button>
+        </div>
+        <div class="ocr-stage" id="ocrStage">
+          <canvas id="ocrCanvas"></canvas>
+          <canvas id="ocrOverlay"></canvas>
+        </div>
+        <div class="ocr-stage-hint" id="ocrStageHint">Tip: use <b>✂ Select area</b> to read only the table — it's faster and more accurate than reading a whole screen.</div>
+        <div class="ocr-settings">
+          <label>Read as
+            <select id="ocrMode">
+              <option value="auto">Auto (table or text)</option>
+              <option value="table">Table</option>
+              <option value="text">Plain text</option>
+            </select>
+          </label>
+          <label>Quality
+            <select id="ocrQuality">
+              <option value="auto">Auto (recommended)</option>
+              <option value="fast">Fast</option>
+              <option value="accurate">Accurate</option>
+              <option value="max">Maximum — for blurry images</option>
+            </select>
+          </label>
+          <label class="ocr-check"><input type="checkbox" id="ocrShowBoxes" checked> Show boxes</label>
+          <label class="ocr-check"><input type="checkbox" id="ocrShowEnh"> Show enhanced</label>
+          <button class="btn primary" id="ocrRun">Read text ▶</button>
+        </div>
+        <div class="ocr-progress" id="ocrProgress" hidden>
+          <div class="ocr-bar"><span id="ocrBarFill"></span></div>
+          <div class="ocr-status" id="ocrStatus"></div>
+        </div>
+      </div>
+
+      <div class="ocr-right">
+        <div class="ocr-tabs">
+          <button class="ocr-tab active" data-tab="table">Table</button>
+          <button class="ocr-tab" data-tab="text">Text</button>
+          <span class="ocr-summary" id="ocrSummary"></span>
+        </div>
+        <div class="ocr-empty" id="ocrEmpty">Results will appear here after you click <b>Read text ▶</b>.</div>
+        <div class="ocr-pane" id="ocrTablePane" hidden>
+          <div class="ocr-grid-tools">
+            <button class="btn small" id="ocrCopySel">Copy selected</button>
+            <button class="btn small" id="ocrCopyAll">Copy whole table</button>
+            <button class="btn small" id="ocrDelRows">Delete rows</button>
+            <button class="btn small" id="ocrDelCols">Delete columns</button>
+            <label class="ocr-check"><input type="checkbox" id="ocrKeepBreaks"> Keep line breaks in cells</label>
+          </div>
+          <div class="ocr-grid-wrap" id="ocrGridWrap" tabindex="0"><table class="ocr-grid" id="ocrGrid"></table></div>
+          <div class="ocr-legend">
+            Click a cell, drag or <kbd>Shift</kbd>+click to select a range · click a letter/number to select a whole column/row · double-click to edit · <kbd>Ctrl</kbd>+<kbd>C</kbd> copies.
+            <span class="lg lg-warn">double-check</span><span class="lg lg-fix">auto-corrected</span>
+          </div>
+        </div>
+        <div class="ocr-pane" id="ocrTextPane" hidden>
+          <textarea id="ocrText" spellcheck="false"></textarea>
+        </div>
+        <div class="ocr-actions" id="ocrActions" hidden>
+          <button class="btn" id="ocrCopyText">Copy as text</button>
+          <button class="btn" id="ocrDlCsv">⬇ CSV</button>
+          <button class="btn" id="ocrDlXlsx">⬇ Excel</button>
+          <button class="btn primary" id="ocrToSheet">Add to booking sheet ➜</button>
+        </div>
+        <div class="msg" id="ocrMsg"></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1876,11 +2056,13 @@ document.addEventListener("error", function(e){
       { element: "#bookingTable", popover: { title: "📋 Paste lists and tables", description: "Copy a column of numbers (like tracking numbers) from anywhere and paste it into one box — it fills straight down new rows. Paste a whole multi-column table the same way, or use the ⎘ Paste table button below to match up columns yourself.", side: "top" } },
       { element: "#bookingTable", popover: { title: "ℹ️ Check what a code really is", description: "Hover your mouse over row 1's Item Code box right now — a popup shows its Goods Name and full Description, so you always know exactly what you've added.", side: "top" } },
       { element: "#layoutToggleWrap", popover: { title: "🔀 Rearrange columns instantly", description: "Flip this switch to reorder the columns to a more useful layout. Click ⚙ Customize order to build your own arrangement and save it." } },
+      { element: "#ocrBtn", popover: { title: "📷 Read a table from a picture", description: "Only have a screenshot, a scanned page or a phone photo? Click here and choose the image — or just press <b>Ctrl+V</b> anywhere on the page to paste a screenshot. It sharpens small or blurry images first, rebuilds the table, and marks anything it's unsure about in yellow. Copy a cell, a column, a row or the whole table, or send it straight into your sheet." +
+          "<img src=\"guide-images/13-ocr.png\" alt=\"A screenshot of a table read into rows and columns\" data-guide-fallback=\"Screenshot: the OCR window\" style=\"width:100%;border-radius:8px;margin-top:10px;display:block;\">" } },
       { element: "#pasteTableBtn", popover: { title: "⎘ Paste table", description: "Paste a table copied from Excel, an email, or a PDF here — it guesses which column is which, and you fix anything wrong before importing." } },
       { element: "#exportBookingCsv", popover: { title: "⬇️ Export your sheet", description: "When you're done, download your sheet as a CSV or Excel file with one click." } },
       { element: "#guideToggle", popover: { title: "📘 Come back any time", description: "This User Guide button has every topic written out with pictures, in case you forget how something works. You can also restart this tour from there." } },
       { element: "#adminToggle", popover: { title: "🔒 Admin (only for updating item codes)", description: "This small link is only for adding new item codes or updating the whole catalog — not your booking sheet. Most people never need to touch this." } },
-      { popover: { title: "🎉 That's everything!", description: "You're ready to go — search, add, edit, drag, paste, export. That's the whole tool. Have fun!" } }
+      { popover: { title: "🎉 That's everything!", description: "You're ready to go — search, add, edit, drag, paste, read pictures, export. That's the whole tool. Have fun!" } }
     ];
   }
 
@@ -1908,6 +2090,1474 @@ document.addEventListener("error", function(e){
   document.getElementById("guideTourBtn").addEventListener("click", function(){
     guideBackdrop.classList.remove("open");
     setTimeout(runTour, 200);
+  });
+
+  // ---------- OCR: image → table / text ----------
+  // Engine: PaddleOCR (PP-OCR v5/v6 via onnxruntime-web — WebGPU when the browser has
+  // it, WebAssembly otherwise), imported lazily from jsDelivr the first time OCR is
+  // used, so it costs nothing on a normal page load. Model files are kept in Cache
+  // Storage after the first download, so later uses start fast and work offline.
+  //
+  // Numbers below were measured on real samples (clean + deliberately blurred Gmail
+  // and booking-table screenshots), not guessed:
+  //  - the recognizer reads best when detected text boxes are ~28px tall, so every
+  //    image is auto-scaled to that (scaling a blurry image further makes it worse)
+  //  - grayscale + a light unsharp mask helps a little; contrast stretching and strong
+  //    sharpening fatten blurred strokes (0↔9, 3↔8) and hurt a lot, so neither is used
+  //  - on blurry images single passes vary ±10 points by scale; voting across three
+  //    scales removes that luck, and passes disagreeing on a box flags ~96% of the
+  //    boxes that end up wrong, which is what drives the "double-check" highlighting
+
+  var OCR_LIB_URL = "https://cdn.jsdelivr.net/npm/ppu-paddle-ocr@6.6.0/web/index.js";
+  var OCR_MODEL_MIRROR = "https://github.com/PT-Perkasa-Pilar-Utama/ppu-paddle-ocr-models/raw/main";
+  var OCR_CACHE_NAME = "csvmaker-ocr-models-v1";
+  var OCR_MODEL_KEYS = { fast: "v6-tiny", accurate: "v5-en-mobile" };
+  var OCR_TARGET_BOX_H = 28;
+  var OCR_MAX_PIXELS = 12e6;
+
+  var ocrBackdrop = document.getElementById("ocrBackdrop");
+  var ocrDrop = document.getElementById("ocrDrop");
+  var ocrFile = document.getElementById("ocrFile");
+  var ocrWork = document.getElementById("ocrWork");
+  var ocrStage = document.getElementById("ocrStage");
+  var ocrCanvas = document.getElementById("ocrCanvas");
+  var ocrOverlay = document.getElementById("ocrOverlay");
+  var ocrGridEl = document.getElementById("ocrGrid");
+  var ocrGridWrap = document.getElementById("ocrGridWrap");
+  var ocrTextEl = document.getElementById("ocrText");
+
+  var ocr = {
+    mod: null, servicePromises: {},
+    img: null, crop: null, enhancedPreview: null,
+    result: null, sel: null, anchor: null, dragging: false, editing: null,
+    cropping: false, cropStart: null, busy: false, runId: 0, codeIndex: null
+  };
+
+  function ocrStatus(text, frac){
+    document.getElementById("ocrProgress").hidden = false;
+    document.getElementById("ocrStatus").textContent = text;
+    if (typeof frac === "number") document.getElementById("ocrBarFill").style.width = Math.round(Math.max(0, Math.min(1, frac)) * 100) + "%";
+  }
+  function ocrHideStatus(){ document.getElementById("ocrProgress").hidden = true; }
+  function ocrMsg(text, ok){ showMsg("ocrMsg", text, ok); if (text && ok !== false) setTimeout(function(){ showMsg("ocrMsg", "", null); }, 2600); }
+  // a timer, not requestAnimationFrame — rAF pauses in background tabs, which would
+  // freeze a long OCR run the moment the user switches tabs while waiting
+  var yieldFrame = function(){ return new Promise(function(r){ setTimeout(r, 20); }); };
+
+  // ---- engine + model loading (Cache Storage, HuggingFace with GitHub mirror fallback)
+
+  async function ocrReadWithProgress(resp, onProgress){
+    var total = +resp.headers.get("Content-Length") || 0;
+    if (!resp.body || !resp.body.getReader) return await resp.arrayBuffer();
+    var reader = resp.body.getReader(), chunks = [], got = 0;
+    for (;;){
+      var part = await reader.read();
+      if (part.done) break;
+      chunks.push(part.value); got += part.value.length;
+      if (onProgress) onProgress(got, total);
+    }
+    var out = new Uint8Array(got), off = 0;
+    chunks.forEach(function(c){ out.set(c, off); off += c.length; });
+    return out.buffer;
+  }
+
+  async function ocrFetchModel(url, onProgress){
+    var cache = null;
+    try {
+      cache = await caches.open(OCR_CACHE_NAME);
+      var hit = await cache.match(url);
+      if (hit) return await hit.arrayBuffer();
+    } catch(e){ cache = null; }
+    var urls = [url];
+    var m = /\/resolve\/main\/(.+)$/.exec(url);
+    if (m) urls.push(OCR_MODEL_MIRROR + "/" + m[1]);
+    var lastErr = null;
+    for (var i = 0; i < urls.length; i++){
+      try {
+        var resp = await fetch(urls[i], { mode: "cors" });
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        var buf = await ocrReadWithProgress(resp, onProgress);
+        if (cache) { try { await cache.put(url, new Response(buf.slice(0))); } catch(e){} }
+        return buf;
+      } catch(e){ lastErr = e; }
+    }
+    throw lastErr || new Error("download failed");
+  }
+
+  function ocrGetService(kind){
+    if (ocr.servicePromises[kind]) return ocr.servicePromises[kind];
+    var p = (async function(){
+      if (!ocr.mod) ocr.mod = await import(OCR_LIB_URL);
+      var preset = ocr.mod.MODEL_PRESETS[OCR_MODEL_KEYS[kind]];
+      var parts = [["detection", "text finder"], ["recognition", "text reader"], ["charactersDictionary", "alphabet"]];
+      var bufs = {};
+      for (var i = 0; i < parts.length; i++){
+        (function(label){
+          ocr._dlLabel = label;
+        })(parts[i][1]);
+        bufs[parts[i][0]] = await ocrFetchModel(preset[parts[i][0]], function(got, total){
+          if (ocr.busy) ocrStatus("Downloading the " + ocr._dlLabel + " model (first time only) — " + (got / 1048576).toFixed(1) + (total ? " of " + (total / 1048576).toFixed(1) : "") + " MB", total ? 0.05 + 0.25 * got / total : 0.1);
+        });
+      }
+      var svc = new ocr.mod.PaddleOcrService({
+        model: { detection: bufs.detection, recognition: bufs.recognition, charactersDictionary: bufs.charactersDictionary }
+      });
+      await svc.initialize();
+      return svc;
+    })();
+    ocr.servicePromises[kind] = p;
+    p.catch(function(){ delete ocr.servicePromises[kind]; });
+    return p;
+  }
+
+  // ---- image decoding: anything the browser can open, plus HEIC (iPhone) and TIFF
+
+  var loadedScripts = {};
+  function loadScriptOnce(src){
+    if (!loadedScripts[src]) loadedScripts[src] = new Promise(function(res, rej){
+      var s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = function(){ delete loadedScripts[src]; rej(new Error("could not load " + src)); };
+      document.head.appendChild(s);
+    });
+    return loadedScripts[src];
+  }
+
+  function ocrToCanvas(source, w, h){
+    var scale = Math.min(1, 5000 / Math.max(w, h));
+    var c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(w * scale)); c.height = Math.max(1, Math.round(h * scale));
+    var x = c.getContext("2d");
+    x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height); // transparent PNGs → white, not black
+    x.imageSmoothingQuality = "high";
+    x.drawImage(source, 0, 0, c.width, c.height);
+    return c;
+  }
+
+  function ocrDecodeViaBrowser(blob){
+    return new Promise(function(res, rej){
+      var url = URL.createObjectURL(blob), im = new Image();
+      im.onload = function(){ URL.revokeObjectURL(url); res(ocrToCanvas(im, im.naturalWidth, im.naturalHeight)); };
+      im.onerror = function(){ URL.revokeObjectURL(url); rej(new Error("decode")); };
+      im.src = url;
+    });
+  }
+
+  async function ocrDecodeFile(file){
+    var name = (file.name || "").toLowerCase(), type = (file.type || "").toLowerCase();
+    if (type === "application/pdf" || /\.pdf$/.test(name))
+      throw new Error("PDF files can't be read here yet — open the PDF, take a screenshot of the table (Windows: Win + Shift + S), then press Ctrl + V here.");
+    var isHeic = /hei[cf]/.test(type) || /\.hei[cf]$/.test(name);
+    var isTiff = /tiff/.test(type) || /\.tiff?$/.test(name);
+    try { return await ocrDecodeViaBrowser(file); }
+    catch(e){
+      if (isHeic){
+        ocrStatus("Converting iPhone (HEIC) photo…", 0.05);
+        await loadScriptOnce("https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js");
+        var out = await window.heic2any({ blob: file, toType: "image/jpeg", quality: 0.95 });
+        return await ocrDecodeViaBrowser(Array.isArray(out) ? out[0] : out);
+      }
+      if (isTiff){
+        ocrStatus("Opening TIFF…", 0.05);
+        await loadScriptOnce("https://cdn.jsdelivr.net/npm/utif@3.1.0/UTIF.js");
+        var buf = await file.arrayBuffer();
+        var ifds = window.UTIF.decode(buf);
+        window.UTIF.decodeImage(buf, ifds[0]);
+        var rgba = window.UTIF.toRGBA8(ifds[0]);
+        var tc = document.createElement("canvas"); tc.width = ifds[0].width; tc.height = ifds[0].height;
+        tc.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(rgba.buffer), tc.width, tc.height), 0, 0);
+        return ocrToCanvas(tc, tc.width, tc.height);
+      }
+      throw new Error("This file couldn't be opened as an image. Try saving it as JPG or PNG and upload that instead.");
+    }
+  }
+
+  // ---- image enhancement
+
+  function ocrBoxBlur(src, w, h, r){
+    var tmp = new Float32Array(w * h), out = new Float32Array(w * h), d = 2 * r + 1, x, y, acc, row;
+    for (y = 0; y < h; y++){
+      row = y * w; acc = 0;
+      for (x = -r; x <= r; x++) acc += src[row + Math.min(w - 1, Math.max(0, x))];
+      for (x = 0; x < w; x++){ tmp[row + x] = acc / d; acc += src[row + Math.min(w - 1, x + r + 1)] - src[row + Math.max(0, x - r)]; }
+    }
+    for (x = 0; x < w; x++){
+      acc = 0;
+      for (y = -r; y <= r; y++) acc += tmp[Math.min(h - 1, Math.max(0, y)) * w + x];
+      for (y = 0; y < h; y++){ out[y * w + x] = acc / d; acc += tmp[Math.min(h - 1, y + r + 1) * w + x] - tmp[Math.max(0, y - r) * w + x]; }
+    }
+    return out;
+  }
+  function ocrGauss(a, w, h, r){ return ocrBoxBlur(ocrBoxBlur(ocrBoxBlur(a, w, h, r), w, h, r), w, h, r); }
+
+  function ocrGrayOf(canvas){
+    var w = canvas.width, h = canvas.height, p = canvas.getContext("2d").getImageData(0, 0, w, h).data, n = w * h, g = new Float32Array(n);
+    for (var i = 0, j = 0; i < n; i++, j += 4) g[i] = 0.299 * p[j] + 0.587 * p[j + 1] + 0.114 * p[j + 2];
+    return g;
+  }
+
+  // screenshot vs photo: screenshots have large areas of one exact colour; photos never do
+  function ocrAnalyze(canvas){
+    var w = canvas.width, h = canvas.height, p = canvas.getContext("2d").getImageData(0, 0, w, h).data;
+    var step = Math.max(1, Math.floor((w * h) / 250000)), counts = new Map(), n = 0, lum = new Uint32Array(256);
+    for (var i = 0; i < w * h; i += step){
+      var j = i * 4, key = (p[j] << 16) | (p[j + 1] << 8) | p[j + 2];
+      counts.set(key, (counts.get(key) || 0) + 1);
+      lum[Math.round(0.299 * p[j] + 0.587 * p[j + 1] + 0.114 * p[j + 2])]++; n++;
+    }
+    var top = 0; counts.forEach(function(v){ if (v > top) top = v; });
+    var c = 0, median = 255;
+    for (var v = 0; v < 256; v++){ c += lum[v]; if (c >= n / 2){ median = v; break; } }
+    return { isScreenshot: top / n > 0.18, darkBg: median < 100 };
+  }
+
+  // background flattening for photos: divide out a smooth estimate of the paper
+  // (max-pooled so text doesn't darken it) → removes shadows and uneven lighting
+  function ocrFlatten(g, w, h){
+    var B = 8, bw = Math.ceil(w / B), bh = Math.ceil(h / B), small = new Float32Array(bw * bh), x, y, i;
+    for (y = 0; y < h; y++) for (x = 0; x < w; x++){ i = ((y / B) | 0) * bw + ((x / B) | 0); if (g[y * w + x] > small[i]) small[i] = g[y * w + x]; }
+    var mx = new Float32Array(bw * bh);
+    for (y = 0; y < bh; y++) for (x = 0; x < bw; x++){
+      var m = 0;
+      for (var dy = -1; dy <= 1; dy++) for (var dx = -1; dx <= 1; dx++){
+        var yy = Math.min(bh - 1, Math.max(0, y + dy)), xx = Math.min(bw - 1, Math.max(0, x + dx));
+        if (small[yy * bw + xx] > m) m = small[yy * bw + xx];
+      }
+      mx[y * bw + x] = m;
+    }
+    var bg = ocrGauss(mx, bw, bh, Math.max(1, Math.round(Math.min(bw, bh) / 30)));
+    for (y = 0; y < h; y++){
+      var fy = Math.min(bh - 1, Math.max(0, y / B - 0.5)), y0 = fy | 0, y1 = Math.min(bh - 1, y0 + 1), ty = fy - y0;
+      for (x = 0; x < w; x++){
+        var fx = Math.min(bw - 1, Math.max(0, x / B - 0.5)), x0 = fx | 0, x1 = Math.min(bw - 1, x0 + 1), tx = fx - x0;
+        var b = (bg[y0 * bw + x0] * (1 - tx) + bg[y0 * bw + x1] * tx) * (1 - ty) + (bg[y1 * bw + x0] * (1 - tx) + bg[y1 * bw + x1] * tx) * ty;
+        g[y * w + x] = Math.min(255, g[y * w + x] / Math.max(b, 20) * 245);
+      }
+    }
+  }
+
+  // projection-profile deskew for tilted photos (±6°)
+  function ocrEstimateSkew(canvas){
+    var s = Math.min(1, 900 / Math.max(canvas.width, canvas.height));
+    var c = document.createElement("canvas"); c.width = Math.round(canvas.width * s); c.height = Math.round(canvas.height * s);
+    c.getContext("2d").drawImage(canvas, 0, 0, c.width, c.height);
+    var w = c.width, h = c.height, g = ocrGrayOf(c), mean = 0, i;
+    for (i = 0; i < g.length; i++) mean += g[i];
+    mean /= g.length;
+    var pts = [];
+    for (var y = 0; y < h; y += 1) for (var x = 0; x < w; x += 1) if (g[y * w + x] < mean * 0.75) pts.push(x, y);
+    if (pts.length < 200) return 0;
+    function score(deg){
+      var a = deg * Math.PI / 180, sn = Math.sin(a), cs = Math.cos(a), bins = new Float32Array(h * 2 + 10), off = h / 2;
+      for (var k = 0; k < pts.length; k += 2){ var yy = Math.round(pts[k + 1] * cs - pts[k] * sn + off); if (yy >= 0 && yy < bins.length) bins[yy]++; }
+      var sc = 0; for (var b = 0; b < bins.length; b++) sc += bins[b] * bins[b];
+      return sc;
+    }
+    var best = 0, bestS = -1, d;
+    for (d = -6; d <= 6; d += 0.5){ var v = score(d); if (v > bestS){ bestS = v; best = d; } }
+    var coarse = best;
+    for (d = coarse - 0.5; d <= coarse + 0.5; d += 0.1){ var v2 = score(d); if (v2 > bestS){ bestS = v2; best = d; } }
+    return best;
+  }
+
+  function ocrRotateBy(canvas, deg){
+    var a = deg * Math.PI / 180, cs = Math.abs(Math.cos(a)), sn = Math.abs(Math.sin(a));
+    var w = canvas.width, h = canvas.height, nw = Math.round(w * cs + h * sn), nh = Math.round(w * sn + h * cs);
+    var c = document.createElement("canvas"); c.width = nw; c.height = nh;
+    var x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, nw, nh);
+    x.translate(nw / 2, nh / 2); x.rotate(a); x.imageSmoothingQuality = "high"; x.drawImage(canvas, -w / 2, -h / 2);
+    return c;
+  }
+
+  // one copy of `src` at `scale`, optionally grayscale / inverted (dark screenshots) /
+  // flattened (photos) / lightly sharpened. With no options it's a plain resize —
+  // which is what clean screenshots read best from (see measurements at the top)
+  function ocrEnhance(src, scale, opts){
+    opts = opts || {};
+    var w = Math.max(1, Math.round(src.width * scale)), h = Math.max(1, Math.round(src.height * scale));
+    var c = document.createElement("canvas"); c.width = w; c.height = h;
+    var ctx = c.getContext("2d", { willReadFrequently: true });
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(src, 0, 0, w, h);
+    if (!opts.invert && !opts.flatten && !opts.sharpen && !opts.gray) return c;
+    var g = ocrGrayOf(c), n = w * h, i;
+    if (opts.invert) for (i = 0; i < n; i++) g[i] = 255 - g[i];
+    if (opts.flatten) ocrFlatten(g, w, h);
+    if (opts.sharpen){
+      var b = ocrGauss(g, w, h, 1), amt = opts.sharpen;
+      for (i = 0; i < n; i++) g[i] = g[i] + amt * (g[i] - b[i]);
+    }
+    var id = ctx.getImageData(0, 0, w, h), p = id.data;
+    for (i = 0; i < n; i++){ var v = g[i] < 0 ? 0 : g[i] > 255 ? 255 : g[i]; p[i * 4] = p[i * 4 + 1] = p[i * 4 + 2] = v; p[i * 4 + 3] = 255; }
+    ctx.putImageData(id, 0, 0);
+    return c;
+  }
+
+  // ---- catalog-aware correction of item codes (the one thing a generic OCR can't do)
+
+  function ocrEditDistance(a, b){
+    var m = a.length, n = b.length, prev = [], cur = [], i, j;
+    for (j = 0; j <= n; j++) prev[j] = j;
+    for (i = 1; i <= m; i++){
+      cur = [i];
+      for (j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = cur;
+    }
+    return prev[n];
+  }
+
+  function ocrCodeIndex(){
+    if (ocr.codeIndex && ocr.codeIndex.size === state.byCode.size) return ocr.codeIndex;
+    var byKey = new Map(), prefixes = new Set();
+    state.byCode.forEach(function(row, code){
+      var m = /^([0-9]?[A-Z]{1,6})0*([1-9][0-9]*)$/.exec(code);
+      if (!m) return;
+      var k = m[1] + "|" + m[2], arr = byKey.get(k);
+      if (!arr) byKey.set(k, arr = []);
+      arr.push(code); prefixes.add(m[1]);
+    });
+    ocr.codeIndex = { size: state.byCode.size, byKey: byKey, prefixes: Array.from(prefixes) };
+    return ocr.codeIndex;
+  }
+
+  var OCR_DIGIT_FIX = { O: "0", Q: "0", D: "0", U: "0", I: "1", L: "1", "|": "1", "!": "1", T: "1", S: "5", B: "8", Z: "2", G: "6" };
+
+  function ocrLooksLikeCode(t){ return /^[0-9]?[A-Z]{2,6}[0-9OQDIL|]{6,}[A-Z0-9]?$/.test(t.toUpperCase().replace(/[\s.\-]+/g, "")); }
+
+  // returns the matching catalog code, or null
+  function ocrSnapCode(raw){
+    var t = String(raw || "").toUpperCase().replace(/[\s\-_.]+/g, "");
+    if (t.length < 8) return null;
+    if (state.byCode.has(t)) return t;
+    var idx = ocrCodeIndex(), found = new Set();
+    idx.prefixes.forEach(function(P){
+      for (var k = P.length - 1; k <= P.length + 1; k++){
+        if (k < 1 || k >= t.length) continue;
+        var head = t.slice(0, k);
+        if (ocrEditDistance(head, P) > 1) continue;
+        var tail = t.slice(k), variants = [tail];
+        if (/[A-Z]$/.test(tail)) variants.push(tail.slice(0, -1)); // stray trailing letter, e.g. "…1337b"
+        variants.forEach(function(v){
+          var digits = v.replace(/[A-Z|!]/g, function(ch){ return OCR_DIGIT_FIX[ch] || "x"; });
+          if (!/^[0-9]+$/.test(digits)) return;
+          var num = digits.replace(/^0+/, "");
+          if (!num) return;
+          (idx.byKey.get(P + "|" + num) || []).forEach(function(code){
+            if (Math.abs(code.length - t.length) <= 2) found.add(code);
+          });
+        });
+      }
+    });
+    return found.size === 1 ? Array.from(found)[0] : null;
+  }
+
+  // mostly-digit tokens: fix letter↔digit confusions (O→0, l→1, S→5…)
+  function ocrFixNumberish(t){
+    var s = String(t).trim();
+    if (!s || s.length > 24) return s;
+    var digits = (s.match(/[0-9]/g) || []).length, conf = (s.match(/[OQDILSBZ|!]/gi) || []).length;
+    if (digits === 0 || digits < s.replace(/[.,\-\s]/g, "").length * 0.6) return s;
+    if (!/^[0-9OQDILSBZ|!.,\-\s]+$/i.test(s) || conf === 0) return s;
+    return s.replace(/[OQDILSBZ|!]/gi, function(ch){ return OCR_DIGIT_FIX[ch.toUpperCase()] || ch; }).replace(/\s+/g, "");
+  }
+
+  // normalize one recognized string before voting, so "ACc…1324" and "ACC…1324"
+  // count as the same vote
+  function ocrNormalizeToken(t){
+    var s = String(t || "").replace(/\s+/g, " ").trim(), fixed = false, note = "";
+    if (!s) return { t: s, fixed: false };
+    if (ocrLooksLikeCode(s)){
+      var code = ocrSnapCode(s);
+      if (code){ if (code !== s){ fixed = true; note = "OCR read \"" + s + "\" — matched to catalog code " + code; } return { t: code, fixed: fixed, note: note, catalog: true }; }
+      return { t: s.toUpperCase().replace(/\s+/g, ""), fixed: false, notInCatalog: true };
+    }
+    var n = ocrFixNumberish(s);
+    if (n !== s){ return { t: n, fixed: true, note: "OCR read \"" + s + "\" — fixed letter/number mix-up" }; }
+    return { t: s, fixed: false };
+  }
+
+  // ---- recognition passes + voting
+
+  // Text boxes the way PaddleOCR itself finds them: threshold the model's text map at
+  // 0.3, one box per connected region (mean score ≥ 0.5), grown by the DB "unclip"
+  // ratio 1.5. The library's shortcut thresholds at 0, which glues neighbouring lines
+  // into one box and only one of them gets read — that lost 4 of 26 lines in a
+  // multi-line table cell; this finds all 26.
+  async function ocrDetectBoxes(svc, canvas){
+    var det = svc.detector, input = await det.preprocessDetection(canvas);
+    var prob = await det.runInference(input.tensor, input.width, input.height);
+    var W = input.width, r = input.resizeRatio, TH = 0.3;
+    var rw = Math.min(W, Math.round(input.originalWidth * r)), rh = Math.min(input.height, Math.round(input.originalHeight * r));
+    var seen = new Uint8Array(W * input.height), stack = [], boxes = [];
+    for (var y = 0; y < rh; y++) for (var x = 0; x < rw; x++){
+      var p0 = y * W + x;
+      if (seen[p0] || !(prob[p0] > TH)) continue;
+      var x0 = x, x1 = x, y0 = y, y1 = y, cnt = 0, sum = 0;
+      seen[p0] = 1; stack.push(p0);
+      while (stack.length){
+        var p = stack.pop(), px = p % W, py = (p - px) / W;
+        cnt++; sum += prob[p];
+        if (px < x0) x0 = px; if (px > x1) x1 = px; if (py < y0) y0 = py; if (py > y1) y1 = py;
+        if (px > 0 && !seen[p - 1] && prob[p - 1] > TH){ seen[p - 1] = 1; stack.push(p - 1); }
+        if (px < rw - 1 && !seen[p + 1] && prob[p + 1] > TH){ seen[p + 1] = 1; stack.push(p + 1); }
+        if (py > 0 && !seen[p - W] && prob[p - W] > TH){ seen[p - W] = 1; stack.push(p - W); }
+        if (py < rh - 1 && !seen[p + W] && prob[p + W] > TH){ seen[p + W] = 1; stack.push(p + W); }
+      }
+      var bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+      if (Math.min(bw, bh) < 2 || sum / cnt < 0.5) continue;
+      var d = cnt * 1.5 / (2 * (bw + bh));
+      var bx0 = Math.max(0, (x0 - d) / r), by0 = Math.max(0, (y0 - d) / r);
+      var bx1 = Math.min(input.originalWidth, (x1 + 1 + d) / r), by1 = Math.min(input.originalHeight, (y1 + 1 + d) / r);
+      if (bx1 - bx0 > 3 && by1 - by0 > 3) boxes.push({ x: Math.round(bx0), y: Math.round(by0), width: Math.round(bx1 - bx0), height: Math.round(by1 - by0) });
+    }
+    return boxes;
+  }
+
+  // hand the page back to the browser for a moment (MessageChannel, not setTimeout:
+  // timers in a background tab are throttled to one per second)
+  var ocrYield = (function(){
+    var ch = new MessageChannel(), q = [];
+    ch.port1.onmessage = function(){ var f = q.shift(); if (f) f(); };
+    return function(){ return new Promise(function(r){ q.push(r); ch.port2.postMessage(0); }); };
+  })();
+
+  async function ocrReadBoxes(svc, canvas, boxes, onLine){
+    if (!boxes.length) return { lines: [] };
+    var rec = svc.recognitor;
+    rec.options.maxCropSourceSideLength = 1e5;  // otherwise anything over 2000px is shrunk first
+    rec.options.mainThreadYieldMs = 0;
+    if (!rec._csvYield){
+      // keep the page responsive (and the progress bar moving) between lines
+      var orig = rec.runInference, last = 0;
+      rec.runInference = async function(t){
+        if (rec._csvOnLine) rec._csvOnLine();
+        if (performance.now() - last > 50){ await ocrYield(); last = performance.now(); }
+        return orig.call(this, t);
+      };
+      rec._csvYield = true;
+    }
+    var n = 0;
+    rec._csvOnLine = onLine ? function(){ onLine(++n, boxes.length); } : null;
+    // one box at a time: the library pads a short crop to the width of the longest in
+    // its batch, and the model read that padding as garbage ("cYanmaGentaYel") on 3
+    // of 26 lines — unbatched it read all 26, and faster
+    var res = await rec.run(canvas, boxes, undefined, "per-box", { minimumConfidence: 0.3, recBatchSize: 1 });
+    return { lines: (res || []).map(function(it){ return [it]; }) };
+  }
+
+  function ocrItemsFromResult(r, scale, offX, offY){
+    var out = [];
+    (r.lines || []).forEach(function(line){
+      (Array.isArray(line) ? line : [line]).forEach(function(it){
+        if (!it || !it.box || !String(it.text || "").trim()) return;
+        var b = it.box, norm = ocrNormalizeToken(it.text);
+        out.push({ raw: it.text, t: norm.t, fixed: norm.fixed, note: norm.note, catalog: !!norm.catalog, notInCatalog: !!norm.notInCatalog,
+          c: it.confidence || 0, x: b.x / scale + offX, y: b.y / scale + offY, w: b.width / scale, h: b.height / scale });
+      });
+    });
+    return out;
+  }
+
+  function ocrIoU(a, b){
+    var x1 = Math.max(a.x, b.x), y1 = Math.max(a.y, b.y), x2 = Math.min(a.x + a.w, b.x + b.w), y2 = Math.min(a.y + a.h, b.y + b.h);
+    var I = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+    return I / (a.w * a.h + b.w * b.h - I || 1);
+  }
+
+  function ocrVote(runs){
+    if (runs.length === 1) return runs[0].map(function(it){
+      return Object.assign({}, it, { votes: 1, of: 1, agree: 1, cands: [{ t: it.t, n: 1, c: it.c }], warn: it.c < 0.8 || it.notInCatalog });
+    });
+    var clusters = [];
+    runs.forEach(function(items, ri){
+      items.forEach(function(it){
+        var best = null, bestI = 0.3;
+        for (var k = 0; k < clusters.length; k++){
+          var cl = clusters[k]; if (cl.runs[ri]) continue;
+          var v = ocrIoU(cl.ref, it); if (v > bestI){ bestI = v; best = cl; }
+        }
+        if (best){ best.members.push(it); best.runs[ri] = true; }
+        else { var nc = { ref: it, members: [it], runs: {} }; nc.runs[ri] = true; clusters.push(nc); }
+      });
+    });
+    var need = Math.min(2, runs.length);
+    return clusters.filter(function(cl){ return cl.members.length >= need; }).map(function(cl){
+      var tally = {};
+      cl.members.forEach(function(m){ var e = tally[m.t] || (tally[m.t] = { t: m.t, n: 0, c: 0, src: m }); e.n++; e.c += m.c; });
+      var cands = Object.keys(tally).map(function(k){ return tally[k]; }).sort(function(a, b){ return b.n - a.n || b.c - a.c; });
+      var win = cands[0].src, xs = cl.members;
+      var box = { x: avg(xs, "x"), y: avg(xs, "y"), w: avg(xs, "w"), h: avg(xs, "h") };
+      var agree = cands[0].n / runs.length;
+      return Object.assign({}, win, box, { t: cands[0].t, votes: cands[0].n, of: runs.length, agree: agree, cands: cands,
+        warn: agree < 0.67 || win.notInCatalog || (cands[0].c / cands[0].n) < 0.6 });
+    });
+    function avg(arr, k){ var s = 0; arr.forEach(function(a){ s += a[k]; }); return s / arr.length; }
+  }
+
+  // bold or wide-spaced codes sometimes come back as "M 3 W M" — when the same code
+  // appears intact elsewhere in the image ("M3WM"), close the gaps
+  function ocrJoinSplitTokens(items){
+    var vocab = {};
+    items.forEach(function(it){ it.t.split(" ").forEach(function(w){ if (w.length >= 2 && /[A-Za-z]/.test(w) && /[0-9]/.test(w)) vocab[w] = 1; }); });
+    function join(s){
+      var ws = s.split(" "), out = [], i = 0;
+      while (i < ws.length){
+        var hit = 0;
+        for (var n = Math.min(6, ws.length - i); n >= 2 && !hit; n--){
+          var part = ws.slice(i, i + n);
+          if (part.every(function(w){ return /^[A-Za-z0-9]{1,3}$/.test(w); }) && vocab[part.join("")]) hit = n;
+        }
+        if (hit){ out.push(ws.slice(i, i + hit).join("")); i += hit; }
+        else { out.push(ws[i]); i++; }
+      }
+      return out.join(" ");
+    }
+    items.forEach(function(it){
+      it.t = join(it.t);
+      if (it.cands){
+        // readings that only differed by those gaps are the same reading
+        var merged = {};
+        it.cands.forEach(function(cd){ var t = join(cd.t), m = merged[t] || (merged[t] = { t: t, n: 0, c: 0 }); m.n += cd.n; m.c += cd.c; });
+        it.cands = Object.keys(merged).map(function(k){ return merged[k]; }).sort(function(a, b){ return b.n - a.n || b.c - a.c; });
+        if (it.of > 1 && it.cands[0].t === it.t){
+          it.votes = it.cands[0].n; it.agree = it.votes / it.of;
+          if (it.agree >= 0.67 && !it.notInCatalog && it.cands[0].c / it.cands[0].n >= 0.6) it.warn = false;
+        }
+      }
+    });
+    return items;
+  }
+
+  // ---- table structure: bordered grids first, whitespace columns second
+
+  function ocrMedian(arr){ if (!arr.length) return 0; var s = arr.slice().sort(function(a, b){ return a - b; }); return s[Math.floor(s.length / 2)]; }
+
+  function ocrDetectGrid(region, textH){
+    var w = region.width, h = region.height, g = ocrGrayOf(region), n = w * h, x, y, i;
+    // adaptive (Bradley) threshold so faint grey borders count as ink
+    var ii = new Float64Array((w + 1) * (h + 1));
+    for (y = 0; y < h; y++){ var rs = 0; for (x = 0; x < w; x++){ rs += g[y * w + x]; ii[(y + 1) * (w + 1) + x + 1] = ii[y * (w + 1) + x + 1] + rs; } }
+    var S = Math.max(15, Math.round(Math.min(w, h) / 20)), half = S >> 1, ink = new Uint8Array(n);
+    for (y = 0; y < h; y++){
+      var ya = Math.max(0, y - half), yb = Math.min(h, y + half + 1);
+      for (x = 0; x < w; x++){
+        var xa = Math.max(0, x - half), xb = Math.min(w, x + half + 1), cnt = (yb - ya) * (xb - xa);
+        var sum = ii[yb * (w + 1) + xb] - ii[ya * (w + 1) + xb] - ii[yb * (w + 1) + xa] + ii[ya * (w + 1) + xa];
+        if (g[y * w + x] * cnt < sum * 0.93 && g[y * w + x] < 245) ink[y * w + x] = 1;
+      }
+    }
+    var minH = Math.max(Math.round(textH * 3.2), 30), minV = Math.max(Math.round(textH * 1.25), 14);
+    var hm = new Uint8Array(n), vm = new Uint8Array(n), start, gap;
+    for (y = 0; y < h; y++){
+      start = -1; gap = 0;
+      for (x = 0; x <= w; x++){
+        var on = x < w && ink[y * w + x];
+        if (on){ if (start < 0) start = x; gap = 0; }
+        else if (start >= 0){
+          if (x < w && gap < 2){ gap++; continue; }
+          var end = x - gap; if (end - start >= minH) for (i = start; i < end; i++) hm[y * w + i] = 1;
+          start = -1; gap = 0;
+        }
+      }
+    }
+    for (x = 0; x < w; x++){
+      start = -1; gap = 0;
+      for (y = 0; y <= h; y++){
+        var on2 = y < h && ink[y * w + x];
+        if (on2){ if (start < 0) start = y; gap = 0; }
+        else if (start >= 0){
+          if (y < h && gap < 2){ gap++; continue; }
+          var end2 = y - gap; if (end2 - start >= minV) for (i = start; i < end2; i++) vm[i * w + x] = 1;
+          start = -1; gap = 0;
+        }
+      }
+    }
+    function segments(mask, horizontal){
+      var seen = new Uint8Array(n), segs = [], stack = [];
+      for (var p0 = 0; p0 < n; p0++){
+        if (!mask[p0] || seen[p0]) continue;
+        var x0 = w, x1 = 0, y0 = h, y1 = 0; stack.push(p0); seen[p0] = 1;
+        while (stack.length){
+          var p = stack.pop(), px = p % w, py = (p / w) | 0;
+          if (px < x0) x0 = px; if (px > x1) x1 = px; if (py < y0) y0 = py; if (py > y1) y1 = py;
+          for (var dy = -1; dy <= 1; dy++) for (var dx = -1; dx <= 1; dx++){
+            var qx = px + dx, qy = py + dy; if (qx < 0 || qy < 0 || qx >= w || qy >= h) continue;
+            var q = qy * w + qx; if (mask[q] && !seen[q]){ seen[q] = 1; stack.push(q); }
+          }
+        }
+        var thick = horizontal ? (y1 - y0 + 1) : (x1 - x0 + 1), len = horizontal ? (x1 - x0 + 1) : (y1 - y0 + 1);
+        if (thick <= Math.max(6, textH * 0.45) && len >= (horizontal ? minH : minV)) segs.push({ x0: x0, x1: x1, y0: y0, y1: y1, c: horizontal ? (y0 + y1) / 2 : (x0 + x1) / 2 });
+      }
+      return segs;
+    }
+    var H = segments(hm, true), V = segments(vm, false);
+    // a real border meets other borders; "=====" decoration lines and underlines don't
+    var tol = Math.max(4, textH * 0.35);
+    function touches(hs, vs){ return vs.c >= hs.x0 - tol && vs.c <= hs.x1 + tol && hs.c >= vs.y0 - tol && hs.c <= vs.y1 + tol; }
+    for (var pass = 0; pass < 2; pass++){
+      H = H.filter(function(hs){ var k = 0; V.forEach(function(vs){ if (touches(hs, vs)) k++; }); return k >= 2; });
+      V = V.filter(function(vs){ var k = 0; H.forEach(function(hs){ if (touches(hs, vs)) k++; }); return k >= 2; });
+    }
+    if (H.length < 2 || V.length < 2) return null;
+    function cluster(vals, eps){
+      vals.sort(function(a, b){ return a - b; }); var out = [];
+      vals.forEach(function(v){ if (out.length && v - out[out.length - 1].last <= eps){ var o = out[out.length - 1]; o.sum += v; o.n++; o.last = v; } else out.push({ sum: v, n: 1, last: v }); });
+      return out.map(function(o){ return o.sum / o.n; });
+    }
+    var eps = Math.max(3, textH * 0.55);
+    var ys = cluster(H.map(function(s){ return s.c; }), eps), xs = cluster(V.map(function(s){ return s.c; }), eps);
+    if (ys.length < 2 || xs.length < 2) return null;
+    var rows = ys.length - 1, cols = xs.length - 1;
+    function hasV(xi, r){ var my = (ys[r] + ys[r + 1]) / 2; return V.some(function(s){ return Math.abs(s.c - xs[xi]) <= eps && s.y0 - tol <= my && s.y1 + tol >= my; }); }
+    function hasH(yi, c){ var mx = (xs[c] + xs[c + 1]) / 2; return H.some(function(s){ return Math.abs(s.c - ys[yi]) <= eps && s.x0 - tol <= mx && s.x1 + tol >= mx; }); }
+    var parent = []; for (i = 0; i < rows * cols; i++) parent[i] = i;
+    function find(a){ while (parent[a] !== a){ parent[a] = parent[parent[a]]; a = parent[a]; } return a; }
+    function union(a, b){ a = find(a); b = find(b); if (a !== b) parent[Math.max(a, b)] = Math.min(a, b); }
+    for (var r = 0; r < rows; r++) for (var c = 0; c < cols; c++){
+      if (c < cols - 1 && !hasV(c + 1, r)) union(r * cols + c, r * cols + c + 1);
+      if (r < rows - 1 && !hasH(r + 1, c)) union(r * cols + c, (r + 1) * cols + c);
+    }
+    var groups = {};
+    for (r = 0; r < rows; r++) for (c = 0; c < cols; c++){
+      var root = find(r * cols + c), gr = groups[root] || (groups[root] = { r: r, c: c, r2: r, c2: c });
+      gr.r = Math.min(gr.r, r); gr.c = Math.min(gr.c, c); gr.r2 = Math.max(gr.r2, r); gr.c2 = Math.max(gr.c2, c);
+    }
+    var cells = Object.keys(groups).map(function(k){
+      var gcell = groups[k];
+      return { r: gcell.r, c: gcell.c, r2: gcell.r2, c2: gcell.c2, x: xs[gcell.c], y: ys[gcell.r], w: xs[gcell.c2 + 1] - xs[gcell.c], h: ys[gcell.r2 + 1] - ys[gcell.r] };
+    });
+    return { rows: rows, cols: cols, xs: xs, ys: ys, cells: cells, rect: { x: xs[0], y: ys[0], w: xs[cols] - xs[0], h: ys[rows] - ys[0] } };
+  }
+
+  function ocrGroupLines(items, textH){
+    var sorted = items.slice().sort(function(a, b){ return (a.y + a.h / 2) - (b.y + b.h / 2); }), lines = [];
+    sorted.forEach(function(it){
+      var cy = it.y + it.h / 2, last = lines[lines.length - 1];
+      if (last && Math.abs(cy - last.cy) <= textH * 0.55) { last.items.push(it); last.cy = (last.cy * (last.items.length - 1) + cy) / last.items.length; }
+      else lines.push({ cy: cy, items: [it] });
+    });
+    lines.forEach(function(l){ l.items.sort(function(a, b){ return a.x - b.x; }); });
+    return lines;
+  }
+
+  function ocrJoinCell(items, textH){
+    return ocrGroupLines(items, textH).map(function(l){ return l.items.map(function(i){ return i.t; }).join(" "); }).join("\n");
+  }
+
+  function ocrCellFromItems(items, textH, rect){
+    return { text: ocrJoinCell(items, textH), items: items, rect: rect,
+      warn: items.some(function(i){ return i.warn; }), fixed: items.some(function(i){ return i.fixed; }),
+      note: items.map(function(i){ return i.note; }).filter(Boolean).concat(
+        items.filter(function(i){ return i.warn; }).map(function(i){ return i.notInCatalog ? "\"" + i.t + "\" looks like an item code but isn't in the catalog" : "Low confidence reading — please check against the image"; })
+      ).join("\n") };
+  }
+
+  // borderless tables: rows by line, columns by vertical whitespace shared across rows
+  function ocrClusterTable(items, textH){
+    var lines = ocrGroupLines(items, textH);
+    if (!items.length) return { grid: [], isTable: false };
+    var minX = Infinity, maxX = 0;
+    items.forEach(function(i){ minX = Math.min(minX, i.x); maxX = Math.max(maxX, i.x + i.w); });
+    var W = Math.ceil(maxX - minX) + 2, cover = new Uint16Array(W);
+    lines.forEach(function(l){
+      var mark = new Uint8Array(W);
+      l.items.forEach(function(i){ for (var x = Math.floor(i.x - minX); x < Math.ceil(i.x + i.w - minX); x++) if (x >= 0 && x < W) mark[x] = 1; });
+      for (var x = 0; x < W; x++) cover[x] += mark[x];
+    });
+    var allow = lines.length >= 8 ? 1 : 0, cols = [], inCol = false, s = 0;
+    for (var x = 0; x <= W; x++){
+      var on = x < W && cover[x] > allow;
+      if (on && !inCol){ inCol = true; s = x; }
+      else if (!on && inCol){ inCol = false; cols.push([s + minX, x + minX]); }
+    }
+    var merged = [];
+    cols.forEach(function(c){ if (merged.length && c[0] - merged[merged.length - 1][1] < textH * 0.9) merged[merged.length - 1][1] = c[1]; else merged.push(c.slice()); });
+    var grid = lines.map(function(l){
+      var buckets = merged.map(function(){ return []; });
+      l.items.forEach(function(i){
+        var cx = i.x + i.w / 2, k = 0;
+        for (var j = 0; j < merged.length; j++) if (cx >= merged[j][0] - textH && cx <= merged[j][1] + textH){ k = j; break; }
+        buckets[k].push(i);
+      });
+      return buckets.map(function(b, j){ return ocrCellFromItems(b, textH, b.length ? null : null); });
+    });
+    var multi = lines.filter(function(l){ return l.items.length >= 2; }).length;
+    return { grid: grid, isTable: merged.length >= 2 && lines.length >= 2 && multi / lines.length >= 0.5 };
+  }
+
+  function ocrPlainText(items, textH){
+    return ocrGroupLines(items, textH).map(function(l){
+      var s = "", prev = null;
+      l.items.forEach(function(i){
+        if (prev){ var gap = i.x - (prev.x + prev.w); s += gap > textH * 2 ? "\t" : " "; }
+        s += i.t; prev = i;
+      });
+      return s;
+    }).join("\n");
+  }
+
+  // column-level repairs: a cell whose digits fit the column's dominant number shape
+  // gets its punctuation restored ("00534" → "0.0534"), and disagreeing votes are
+  // re-ranked with a prior toward values the rest of the column confidently contains
+  function ocrColumnRepair(grid, blurry){
+    if (!grid.length) return;
+    var cols = grid[0].length;
+    for (var c = 0; c < cols; c++){
+      var shapes = {}, freq = {}, cells = [];
+      for (var r = 0; r < grid.length; r++){
+        var cell = grid[r][c]; if (!cell || cell.covered || !cell.text) continue;
+        cells.push(cell);
+        var shape = cell.text.replace(/[0-9]/g, "d");
+        if (/^[d.,\-]+$/.test(shape) && /d/.test(shape)) shapes[shape] = (shapes[shape] || 0) + 1;
+        cell.items.forEach(function(i){ if (!i.warn) freq[i.t] = (freq[i.t] || 0) + 1; });
+      }
+      var best = null, bestN = 0;
+      Object.keys(shapes).forEach(function(k){ if (shapes[k] > bestN){ bestN = shapes[k]; best = k; } });
+      cells.forEach(function(cell){
+        cell.items.forEach(function(it){
+          if (it.cands && it.cands.length > 1 && it.warn){
+            var scored = it.cands.map(function(cd){
+              var sc = cd.n + (freq[cd.t] >= 2 ? 0.75 : 0) + (state.byCode.has(cd.t) ? 1 : 0) - (ocrLooksLikeCode(cd.t) && !state.byCode.has(cd.t) ? 0.5 : 0);
+              if (best && cd.t.replace(/[0-9]/g, "d") === best) sc += 0.25;
+              return { t: cd.t, sc: sc };
+            }).sort(function(a, b){ return b.sc - a.sc; });
+            if (scored[0].t !== it.t){ it.note = (it.note ? it.note + "\n" : "") + "Passes disagreed (\"" + it.t + "\" vs \"" + scored[0].t + "\") — picked the value that matches the rest of this column"; it.t = scored[0].t; it.fixed = true; }
+          }
+          // only repairs a lost/misread decimal point ("00534", "0-0120", "0.01.30"),
+          // never touches thousands separators or plain whole numbers
+          if (best && bestN >= 3 && bestN >= cells.length * 0.6 && best.indexOf(".") >= 0){
+            var digits = it.t.replace(/[^0-9]/g, ""), shapeDigits = best.replace(/[^d]/g, "").length;
+            var dotIssue = it.t.indexOf(".") < 0 || (it.t.match(/\./g) || []).length > 1 || /[0-9]-[0-9]/.test(it.t);
+            if (dotIssue && digits.length === shapeDigits && it.t.replace(/[0-9]/g, "d") !== best && /^[0-9.,\-\s]+$/.test(it.t)){
+              var k = 0, rebuilt = best.replace(/d/g, function(){ return digits[k++]; });
+              it.note = (it.note ? it.note + "\n" : "") + "OCR read \"" + it.t + "\" — restored the column's number format"; it.t = rebuilt; it.fixed = true;
+            }
+          }
+        });
+        cell.items.forEach(function(it){
+          // a 2-of-3 vote backed by the rest of the column (or by the catalog) is
+          // trustworthy — un-flag it so the highlights point at real doubts only
+          if (it.warn && !it.notInCatalog && it.of > 1 && it.votes >= 2 && (freq[it.t] >= 2 || state.byCode.has(it.t))) it.warn = false;
+        });
+        var fresh = ocrCellFromItems(cell.items, cell._textH || 20, cell.rect);
+        cell.text = fresh.text; cell.warn = fresh.warn; cell.fixed = fresh.fixed; cell.note = fresh.note;
+      });
+      // blurry images: a rare value one character away from a value the column
+      // repeats far more often is probably a misread of it (0.1288 among many
+      // 0.1268s) — flag it, don't change it (1520 vs 1510 can both be real)
+      if (blurry){
+        var counts = {};
+        cells.forEach(function(cell){ var t = cell.text.trim(); if (t) counts[t] = (counts[t] || 0) + 1; });
+        cells.forEach(function(cell){
+          var t = cell.text.trim();
+          if (!t || cell.warn || t.length > 24) return;
+          var near = Object.keys(counts).filter(function(k){ return counts[k] >= 3 && counts[k] >= counts[t] * 3 && k.length === t.length && ocrEditDistance(k, t) === 1; })[0];
+          if (near){
+            cell.warn = true; cell.items.forEach(function(i){ i.warn = true; });
+            cell.note = (cell.note ? cell.note + "\n" : "") + "Might be \"" + near + "\" (appears " + counts[near] + "× in this column) — please check against the image";
+          }
+        });
+      }
+      // a number that doesn't fit its column's usual format (a 6-digit value in a
+      // column of 5-digit tracking numbers, "0.1 8" among "0.1268"s) gets flagged —
+      // text cells (headers) are left alone
+      if (best && bestN >= 4 && bestN >= cells.length * 0.6){
+        var shapeRe = new RegExp("^" + best.replace(/[.\-]/g, "\\$&").replace(/d/g, "[0-9]") + "$");
+        // whole numbers only count as "one format" when they're ID-like (43544…43550 —
+        // tightly clustered, strong evidence even at 60%); quantities (310, 1520, 9060)
+        // naturally have different lengths. Other formats need 70% of the column.
+        var idLike = bestN >= cells.length * 0.7;
+        if (/^d+$/.test(best)){
+          var nums = cells.map(function(cell){ return cell.text.trim(); }).filter(function(t){ return shapeRe.test(t); }).map(Number);
+          var lo = Math.min.apply(null, nums), hi = Math.max.apply(null, nums);
+          idLike = hi - lo <= ocrMedian(nums) * 0.2;
+        }
+        if (idLike) cells.forEach(function(cell){
+          var t = cell.text.trim();
+          if (!t || shapeRe.test(t) || !/[0-9]/.test(t) || (t.match(/[0-9]/g) || []).length < t.replace(/\s/g, "").length * 0.6) return;
+          if (!cell.warn){
+            cell.warn = true; cell.items.forEach(function(i){ i.warn = true; });
+            cell.note = (cell.note ? cell.note + "\n" : "") + "Doesn't match the rest of this column (most look like " + best.replace(/d/g, "9") + ") — please check against the image";
+          }
+        });
+      }
+    }
+  }
+
+  function ocrBuildResult(items, region, offX, offY, mode, textH, blurry){
+    var text = ocrPlainText(items, textH), grid = [], kind = "text", gridInfo = null;
+    if (mode !== "text"){
+      // big photos: find the grid on a smaller copy (same answer, a fraction of the memory)
+      var gs = Math.min(1, Math.sqrt(3e6 / (region.width * region.height)));
+      var gridSrc = region;
+      if (gs < 1){ gridSrc = document.createElement("canvas"); gridSrc.width = Math.round(region.width * gs); gridSrc.height = Math.round(region.height * gs); gridSrc.getContext("2d").drawImage(region, 0, 0, gridSrc.width, gridSrc.height); }
+      gridInfo = ocrDetectGrid(gridSrc, textH * gs);
+      if (gridInfo && gs < 1){
+        gridInfo.cells.forEach(function(c){ c.x /= gs; c.y /= gs; c.w /= gs; c.h /= gs; });
+        gridInfo.rect = { x: gridInfo.rect.x / gs, y: gridInfo.rect.y / gs, w: gridInfo.rect.w / gs, h: gridInfo.rect.h / gs };
+        gridInfo.xs = gridInfo.xs.map(function(v){ return v / gs; }); gridInfo.ys = gridInfo.ys.map(function(v){ return v / gs; });
+      }
+      if (gridInfo){
+        var xs = gridInfo.xs.map(function(v){ return v + offX; }), gTop = gridInfo.rect.y + offY, gBot = gTop + gridInfo.rect.h;
+        var pitch = gridInfo.rect.h / gridInfo.rows, nCols = xs.length - 1;
+        var colOf = function(it){ var cx = it.x + it.w / 2; for (var j = 0; j < nCols; j++) if (cx < xs[j + 1]) return j; return nCols - 1; };
+        var rowFromLine = function(line){
+          var buckets = xs.slice(1).map(function(){ return []; });
+          line.items.forEach(function(it){ buckets[Math.max(0, colOf(it))].push(it); });
+          return buckets.map(function(b, j){
+            var y0 = b.length ? Math.min.apply(null, b.map(function(i){ return i.y; })) : 0, y1 = b.length ? Math.max.apply(null, b.map(function(i){ return i.y + i.h; })) : 0;
+            var cell = ocrCellFromItems(b, textH, b.length ? { x: xs[j], y: y0 - 2, w: xs[j + 1] - xs[j], h: y1 - y0 + 4 } : null);
+            cell._textH = textH; return cell;
+          });
+        };
+        var spreads = function(line){ var s = new Set(); line.items.forEach(function(it){ s.add(colOf(it)); }); return s.size >= Math.min(2, nCols); };
+        var inXRange = function(it){ var cx = it.x + it.w / 2; return cx >= xs[0] - textH && cx <= xs[nCols] + textH; };
+        var inBox = items.filter(function(it){ var cy = it.y + it.h / 2; return inXRange(it) && cy >= gTop - textH * 0.3 && cy <= gBot + textH * 0.3; });
+        // lines just above/below the grid that line up with its columns are table rows
+        // too (borders there too faint/blurred to detect)
+        var boxSet = new Set(inBox), looseLines = ocrGroupLines(items.filter(function(it){ return inXRange(it) && !boxSet.has(it); }), textH);
+        var extraBelow = [], extraAbove = [], edge = gBot;
+        looseLines.filter(function(l){ return l.cy > gBot; }).sort(function(a, b){ return a.cy - b.cy; }).some(function(l){
+          var top = Math.min.apply(null, l.items.map(function(i){ return i.y; }));
+          if (top - edge > pitch * 1.6 || !spreads(l)) return true;
+          extraBelow.push(l); edge = Math.max.apply(null, l.items.map(function(i){ return i.y + i.h; })); return false;
+        });
+        edge = gTop;
+        looseLines.filter(function(l){ return l.cy < gTop; }).sort(function(a, b){ return b.cy - a.cy; }).some(function(l){
+          var bottom = Math.max.apply(null, l.items.map(function(i){ return i.y + i.h; }));
+          if (edge - bottom > pitch * 1.6 || !spreads(l)) return true;
+          extraAbove.unshift(l); edge = Math.min.apply(null, l.items.map(function(i){ return i.y; })); return false;
+        });
+        var tableItems = inBox.slice();
+        extraAbove.concat(extraBelow).forEach(function(l){ tableItems = tableItems.concat(l.items); });
+        var lines = ocrGroupLines(tableItems, textH);
+        var simple = lines.length >= 2 && lines.filter(spreads).length / lines.length >= 0.6;
+        if (simple){
+          // one text line = one row: take rows from the words themselves and only the
+          // columns from the borders. Horizontal borders are the first thing to vanish
+          // in a blurry image (they merged rows in testing); vertical ones survive.
+          var coarse = lines.filter(function(l){
+            var byCol = {};
+            l.items.forEach(function(it){ (byCol[colOf(it)] = byCol[colOf(it)] || []).push(it); });
+            return Object.keys(byCol).some(function(k){
+              var arr = byCol[k].sort(function(a, b){ return a.x - b.x; });
+              for (var q = 1; q < arr.length; q++) if (arr[q].x - (arr[q - 1].x + arr[q - 1].w) > textH * 2.5) return true;
+              return false;
+            });
+          }).length > lines.length * 0.2;
+          if (coarse){ grid = ocrClusterTable(tableItems, textH).grid; grid.forEach(function(row){ row.forEach(function(c){ c._textH = textH; }); }); }
+          else grid = lines.map(rowFromLine);
+        } else {
+          // multi-line cells (e.g. long descriptions): trust the drawn grid
+          var byCell = gridInfo.cells.map(function(){ return []; });
+          inBox.forEach(function(it){
+            var cx = it.x - offX + it.w / 2, cy = it.y - offY + it.h / 2;
+            for (var k = 0; k < gridInfo.cells.length; k++){
+              var cc = gridInfo.cells[k];
+              if (cx >= cc.x && cx <= cc.x + cc.w && cy >= cc.y && cy <= cc.y + cc.h){ byCell[k].push(it); return; }
+            }
+          });
+          for (var r = 0; r < gridInfo.rows; r++){ grid.push([]); for (var c = 0; c < gridInfo.cols; c++) grid[r].push({ text: "", items: [], covered: true, rect: null }); }
+          gridInfo.cells.forEach(function(cc, k){
+            var cell = ocrCellFromItems(byCell[k], textH, { x: cc.x + offX, y: cc.y + offY, w: cc.w, h: cc.h });
+            cell._textH = textH;
+            grid[cc.r][cc.c] = cell;
+          });
+          extraAbove.slice().reverse().forEach(function(l){ grid.unshift(rowFromLine(l)); });
+          extraBelow.forEach(function(l){ grid.push(rowFromLine(l)); });
+        }
+        // drop fully empty rows/columns (outer frame slivers)
+        grid = grid.filter(function(row){ return row.some(function(c){ return c.text; }); });
+        if (grid.length){
+          var keep = grid[0].map(function(_, c){ return grid.some(function(row){ return row[c].text; }); });
+          grid = grid.map(function(row){ return row.filter(function(_, c){ return keep[c]; }); });
+        }
+        var filled = 0; grid.forEach(function(row){ row.forEach(function(c){ if (c.text) filled++; }); });
+        if (filled >= 2 && grid.length && grid[0].length) kind = "grid"; else grid = [];
+      }
+      if (kind !== "grid"){
+        var cl = ocrClusterTable(items, textH);
+        if (cl.isTable || mode === "table"){ grid = cl.grid; kind = "columns"; grid.forEach(function(row){ row.forEach(function(c){ c._textH = textH; }); }); }
+      }
+    }
+    if (kind === "text"){
+      grid = ocrGroupLines(items, textH).map(function(l){ var cell = ocrCellFromItems(l.items, textH, null); cell._textH = textH; return [cell]; });
+    }
+    ocrColumnRepair(grid, blurry);
+    grid.forEach(function(row){ row.forEach(function(c){ if (c.covered){ c.text = ""; c.warn = false; c.fixed = false; } }); });
+    return { kind: kind, grid: grid, text: text, items: items, tableRect: gridInfo ? { x: gridInfo.rect.x + offX, y: gridInfo.rect.y + offY, w: gridInfo.rect.w, h: gridInfo.rect.h } : null };
+  }
+
+  // ---- the full run
+
+  async function ocrRun(){
+    if (!ocr.img || ocr.busy) return;
+    ocr.busy = true; var myRun = ++ocr.runId, t0 = performance.now();
+    document.getElementById("ocrRun").disabled = true;
+    showMsg("ocrMsg", "", null);
+    try {
+      var mode = document.getElementById("ocrMode").value, quality = document.getElementById("ocrQuality").value;
+      var cr = ocr.crop || { x: 0, y: 0, w: ocr.img.width, h: ocr.img.height };
+      var region = document.createElement("canvas"); region.width = Math.max(1, Math.round(cr.w)); region.height = Math.max(1, Math.round(cr.h));
+      var rctx = region.getContext("2d", { willReadFrequently: true }); rctx.fillStyle = "#fff"; rctx.fillRect(0, 0, region.width, region.height);
+      rctx.drawImage(ocr.img, cr.x, cr.y, cr.w, cr.h, 0, 0, region.width, region.height);
+      var info = ocrAnalyze(region);
+      ocr.deskewed = 0;
+      if (!info.isScreenshot){
+        ocrStatus("Straightening the photo…", 0.03); await yieldFrame();
+        var skew = ocrEstimateSkew(region);
+        if (Math.abs(skew) >= 0.4){ region = ocrRotateBy(region, -skew); ocr.deskewed = skew; }
+      }
+      var kind = quality === "fast" ? "fast" : "accurate";
+      ocrStatus("Loading the reading engine…", 0.04);
+      var svc = await ocrGetService(kind);
+      if (myRun !== ocr.runId) return;
+
+      // measure how big the text is (on the untouched image), then pick a scale
+      ocrStatus("Measuring text size…", 0.32); await yieldFrame();
+      var probeScale = Math.min(1, 1600 / Math.max(region.width, region.height));
+      var probe = ocrEnhance(region, probeScale, { invert: info.darkBg });
+      var det = await svc.detect(probe, { noCache: true });
+      var boxes = (det && det.boxes) || [];
+      var hs = boxes.map(function(b){ return (b.box || b).height; }).filter(function(v){ return v > 0; });
+      var textH0 = hs.length ? ocrMedian(hs) / probeScale : 0;
+      if (!hs.length){
+        var s2 = Math.min(3, 2 * probeScale), probe2 = ocrEnhance(region, s2, { invert: info.darkBg });
+        var det2 = await svc.detect(probe2, { noCache: true });
+        var hs2 = ((det2 && det2.boxes) || []).map(function(b){ return (b.box || b).height; }).filter(function(v){ return v > 0; });
+        if (!hs2.length) throw new Error("No text was found in this image. If the text is very small, try ✂ Select area around it so it can be enlarged.");
+        textH0 = ocrMedian(hs2) / s2;
+      }
+      // Table mode: if the image has a bordered table, read only inside it — a Gmail
+      // screenshot's sidebar was ~40% of all text boxes and most of the run time
+      var offX = cr.x, offY = cr.y, tableOnly = false;
+      if (mode !== "text"){
+        ocrStatus("Looking for a table…", 0.34); await yieldFrame();
+        var gsc = Math.min(1, Math.sqrt(3e6 / (region.width * region.height))), gsrc = region;
+        if (gsc < 1){ gsrc = document.createElement("canvas"); gsrc.width = Math.round(region.width * gsc); gsrc.height = Math.round(region.height * gsc); gsrc.getContext("2d").drawImage(region, 0, 0, gsrc.width, gsrc.height); }
+        var pre = ocrDetectGrid(gsrc, textH0 * gsc);
+        if (pre && pre.rows * pre.cols >= 2){
+          // grow the table box to swallow any text sitting right against it, so a
+          // partially-detected grid (faint or blurred borders) can never cut rows off
+          var R = { x: pre.rect.x / gsc, y: pre.rect.y / gsc, w: pre.rect.w / gsc, h: pre.rect.h / gsc };
+          var rowH = R.h / pre.rows, reachV = Math.max(rowH * 1.2, textH0 * 1.5), reachH = textH0 * 1.5;
+          var pb = boxes.map(function(b){ var bb = b.box || b; return { x: bb.x / probeScale, y: bb.y / probeScale, w: bb.width / probeScale, h: bb.height / probeScale, in: false }; });
+          for (var grow = true, guard = 0; grow && guard < 400; guard++){
+            grow = false;
+            pb.forEach(function(b){
+              if (b.in) return;
+              var xo = Math.min(b.x + b.w, R.x + R.w) - Math.max(b.x, R.x), yo = Math.min(b.y + b.h, R.y + R.h) - Math.max(b.y, R.y);
+              if (xo > b.w * 0.5 && yo > b.h * 0.5){ b.in = true; return; }
+              var vGap = b.y >= R.y + R.h ? b.y - (R.y + R.h) : R.y - (b.y + b.h);
+              var hGap = b.x >= R.x + R.w ? b.x - (R.x + R.w) : R.x - (b.x + b.w);
+              if ((xo > b.w * 0.5 && vGap >= 0 && vGap < reachV) || (yo > b.h * 0.5 && hGap >= 0 && hGap < reachH)){
+                var nx = Math.min(R.x, b.x), ny = Math.min(R.y, b.y);
+                R = { x: nx, y: ny, w: Math.max(R.x + R.w, b.x + b.w) - nx, h: Math.max(R.y + R.h, b.y + b.h) - ny };
+                b.in = true; grow = true;
+              }
+            });
+          }
+          var pad = Math.max(4, textH0 * 0.6);
+          var tx = Math.max(0, R.x - pad), ty = Math.max(0, R.y - pad);
+          var tw = Math.min(region.width - tx, R.w + 2 * pad), th = Math.min(region.height - ty, R.h + 2 * pad);
+          if (tw * th < region.width * region.height * 0.85){
+            var tcan = document.createElement("canvas"); tcan.width = Math.round(tw); tcan.height = Math.round(th);
+            tcan.getContext("2d").drawImage(region, tx, ty, tw, th, 0, 0, tcan.width, tcan.height);
+            region = tcan; offX += tx; offY += ty; tableOnly = true;
+          }
+        }
+      }
+
+      // Integer factors keep the pixel grid aligned: on a clean screenshot 2× read
+      // 100% vs 97.7% at 1× and only 90.9% at a fractional 1.17×. Small text → 2×,
+      // tiny → 3×, normal → 1×, huge (big photos) → shrink for speed.
+      var maxScale = Math.sqrt(OCR_MAX_PIXELS / (region.width * region.height));
+      var base = textH0 < 11 ? 3 : textH0 < 30 ? 2 : textH0 <= 70 ? 1 : 0.5;
+      while (base > 1 && base > maxScale) base -= 1;
+      if (base > maxScale) base = Math.max(0.25, maxScale);
+      var blurry = textH0 < 19;
+      var photo = !info.isScreenshot;
+      // enhancement only where it measured positive: small/blurry text gets grayscale +
+      // a light sharpen; photos get shadow flattening; clean screenshots stay untouched
+      var enhOpts = { invert: info.darkBg, flatten: photo, gray: blurry || photo, sharpen: blurry ? 0.8 : 0 };
+      var passes;
+      if (quality === "max" || (quality === "auto" && blurry)){
+        // three sizes, then a vote. On blurry text the sharpened copies beat the plain
+        // ones at every size (83–86% vs 78–82% of cells), so all passes use them; the
+        // vote's main job is pointing at the cells the passes disagreed on
+        var up = Math.min(maxScale, base + 1), down = base >= 2 ? (blurry ? base - 0.5 : base - 1) : Math.max(0.5, base / 2);
+        passes = [{ s: base, o: enhOpts }];
+        if (up > base) passes.push({ s: up, o: enhOpts });
+        passes.push({ s: down, o: enhOpts });
+      } else passes = [{ s: base, o: enhOpts }];
+
+      var runs = [], boxCache = {};
+      for (var p = 0; p < passes.length; p++){
+        var sc = passes[p].s, tag = passes.length > 1 ? " (pass " + (p + 1) + " of " + passes.length + ")" : "";
+        ocrStatus("Enhancing image" + tag + "…", 0.35 + 0.55 * p / passes.length);
+        await yieldFrame();
+        var enh = ocrEnhance(region, sc, passes[p].o);
+        if (p === 0) ocr.enhancedPreview = { canvas: enh, crop: { x: offX, y: offY, w: region.width, h: region.height } };
+        ocrStatus("Finding text" + tag + "…", 0.37 + 0.55 * p / passes.length);
+        var bxs = boxCache[sc] || (boxCache[sc] = await ocrDetectBoxes(svc, enh));
+        if (myRun !== ocr.runId) return;
+        ocrStatus("Reading text" + tag + "…", 0.40 + 0.55 * p / passes.length);
+        var res = await ocrReadBoxes(svc, enh, bxs, (function(p0, tag0){
+          return function(i, n){ if (i === n || i % 5 === 0) ocrStatus("Reading text" + tag0 + " — line " + i + " of " + n + "…", 0.40 + 0.55 * (p0 + i / n) / passes.length); };
+        })(p, tag));
+        if (myRun !== ocr.runId) return;
+        runs.push(ocrItemsFromResult(res, sc, 0, 0));
+      }
+      ocrStatus("Building the table…", 0.95); await yieldFrame();
+      var items = ocrJoinSplitTokens(ocrVote(runs));
+      // back to original-image coordinates (only exact when not deskewed; deskewed
+      // photos keep region coordinates, which is fine for highlighting)
+      items.forEach(function(it){ it.x += offX; it.y += offY; });
+      var textH = Math.max(8, ocrMedian(items.map(function(i){ return i.h; })) || textH0);
+      var result = ocrBuildResult(items, region, offX, offY, mode, textH, blurry && passes.length > 1);
+      result.ms = Math.round(performance.now() - t0);
+      result.passes = passes.length;
+      result.blurry = blurry;
+      result.tableOnly = tableOnly;
+      // letters under ~8px, or the reader mostly unsure of itself
+      result.poor = textH0 < 8 || (items.length >= 5 && ocrMedian(items.map(function(i){ return i.c; })) < 0.75);
+      ocr.result = result;
+      ocr.sel = null; ocr.anchor = null;
+      ocrRenderResult();
+      ocrHideStatus();
+    } catch(err){
+      console.error(err);
+      ocrHideStatus();
+      var msg = err && err.message ? err.message : String(err);
+      if (/Failed to fetch|NetworkError|HTTP \d|download failed|import/i.test(msg)) msg = "Couldn't download the reading engine — check your internet connection and try again (after the first successful run it's saved on this computer).";
+      showMsg("ocrMsg", msg, false);
+    } finally {
+      ocr.busy = false;
+      document.getElementById("ocrRun").disabled = false;
+      ocrDrawStage();
+    }
+  }
+
+  // ---- stage: image, boxes, crop selection
+
+  function ocrDrawStage(){
+    if (!ocr.img) return;
+    var showEnh = document.getElementById("ocrShowEnh").checked && ocr.enhancedPreview && !ocr.deskewed;
+    var src = ocr.img;
+    ocrCanvas.width = src.width; ocrCanvas.height = src.height;
+    var ctx = ocrCanvas.getContext("2d");
+    ctx.drawImage(src, 0, 0);
+    if (showEnh){
+      var ep = ocr.enhancedPreview;
+      ctx.drawImage(ep.canvas, ep.crop.x, ep.crop.y, ep.crop.w, ep.crop.h);
+    }
+    ocrDrawOverlay();
+  }
+  function ocrDrawOverlay(){
+    if (!ocr.img) return;
+    var src = ocr.img;
+    if (ocrOverlay.width !== src.width || ocrOverlay.height !== src.height){ ocrOverlay.width = src.width; ocrOverlay.height = src.height; }
+    var o = ocrOverlay.getContext("2d"), rect = ocrCanvas.getBoundingClientRect();
+    var px = rect.width ? src.width / rect.width : 1;
+    o.clearRect(0, 0, src.width, src.height);
+    var cr = ocr.cropDraft || ocr.crop;
+    if (cr){
+      o.fillStyle = "rgba(10,14,22,.45)";
+      o.fillRect(0, 0, src.width, cr.y); o.fillRect(0, cr.y + cr.h, src.width, src.height - cr.y - cr.h);
+      o.fillRect(0, cr.y, cr.x, cr.h); o.fillRect(cr.x + cr.w, cr.y, src.width - cr.x - cr.w, cr.h);
+      o.strokeStyle = "#6089ff"; o.lineWidth = 2 * px; o.setLineDash([6 * px, 4 * px]); o.strokeRect(cr.x, cr.y, cr.w, cr.h); o.setLineDash([]);
+    }
+    if (ocr.result && !ocr.deskewed && document.getElementById("ocrShowBoxes").checked){
+      o.lineWidth = Math.max(1, 1.2 * px);
+      ocr.result.items.forEach(function(it){
+        o.strokeStyle = it.warn ? "rgba(217,119,6,.95)" : it.fixed ? "rgba(8,145,178,.9)" : "rgba(36,80,216,.55)";
+        o.strokeRect(it.x, it.y, it.w, it.h);
+      });
+    }
+    if (ocr.result && ocr.sel && !ocr.deskewed){
+      o.fillStyle = "rgba(96,137,255,.28)"; o.strokeStyle = "#2450d8"; o.lineWidth = 2.5 * px;
+      ocrSelectedCells().forEach(function(cell){
+        var rr = cell.rect || ocrBoundsOf(cell.items);
+        if (rr){ o.fillRect(rr.x, rr.y, rr.w, rr.h); o.strokeRect(rr.x, rr.y, rr.w, rr.h); }
+      });
+    }
+  }
+  function ocrBoundsOf(items){
+    if (!items || !items.length) return null;
+    var x0 = Infinity, y0 = Infinity, x1 = 0, y1 = 0;
+    items.forEach(function(i){ x0 = Math.min(x0, i.x); y0 = Math.min(y0, i.y); x1 = Math.max(x1, i.x + i.w); y1 = Math.max(y1, i.y + i.h); });
+    return { x: x0 - 2, y: y0 - 2, w: x1 - x0 + 4, h: y1 - y0 + 4 };
+  }
+
+  function ocrStagePoint(e){
+    var rect = ocrCanvas.getBoundingClientRect();
+    return { x: Math.max(0, Math.min(ocr.img.width, (e.clientX - rect.left) * ocr.img.width / rect.width)),
+             y: Math.max(0, Math.min(ocr.img.height, (e.clientY - rect.top) * ocr.img.height / rect.height)) };
+  }
+  ocrStage.addEventListener("pointerdown", function(e){
+    if (!ocr.cropping || !ocr.img) return;
+    e.preventDefault(); ocrStage.setPointerCapture(e.pointerId);
+    ocr.cropStart = ocrStagePoint(e); ocr.cropDraft = { x: ocr.cropStart.x, y: ocr.cropStart.y, w: 0, h: 0 };
+  });
+  ocrStage.addEventListener("pointermove", function(e){
+    if (!ocr.cropping || !ocr.cropStart) return;
+    var p = ocrStagePoint(e), s = ocr.cropStart;
+    ocr.cropDraft = { x: Math.min(s.x, p.x), y: Math.min(s.y, p.y), w: Math.abs(p.x - s.x), h: Math.abs(p.y - s.y) };
+    ocrDrawOverlay();
+  });
+  ocrStage.addEventListener("pointerup", function(){
+    if (!ocr.cropping || !ocr.cropStart) return;
+    var d = ocr.cropDraft; ocr.cropStart = null; ocr.cropDraft = null;
+    ocr.cropping = false; ocrStage.classList.remove("cropping");
+    document.getElementById("ocrCropBtn").textContent = "✂ Select area";
+    if (d && d.w > 12 && d.h > 12){ ocr.crop = d; document.getElementById("ocrCropClear").hidden = false; }
+    ocrDrawOverlay();
+  });
+
+  document.getElementById("ocrCropBtn").addEventListener("click", function(){
+    ocr.cropping = !ocr.cropping;
+    ocrStage.classList.toggle("cropping", ocr.cropping);
+    this.textContent = ocr.cropping ? "Drag over the area…" : "✂ Select area";
+  });
+  document.getElementById("ocrCropClear").addEventListener("click", function(){ ocr.crop = null; this.hidden = true; ocrDrawOverlay(); });
+  function ocrRotate(dir){
+    if (!ocr.img || ocr.busy) return;
+    var s = ocr.img, c = document.createElement("canvas"); c.width = s.height; c.height = s.width;
+    var x = c.getContext("2d"); x.translate(c.width / 2, c.height / 2); x.rotate(dir * Math.PI / 2); x.drawImage(s, -s.width / 2, -s.height / 2);
+    ocrSetImage(c);
+  }
+  document.getElementById("ocrRotL").addEventListener("click", function(){ ocrRotate(-1); });
+  document.getElementById("ocrRotR").addEventListener("click", function(){ ocrRotate(1); });
+  document.getElementById("ocrShowBoxes").addEventListener("change", ocrDrawOverlay);
+  document.getElementById("ocrShowEnh").addEventListener("change", ocrDrawStage);
+  document.getElementById("ocrRun").addEventListener("click", ocrRun);
+  document.getElementById("ocrNewImg").addEventListener("click", function(){ ocrReset(); ocrFile.click(); });
+  window.addEventListener("resize", function(){ if (ocrBackdrop.classList.contains("open")) ocrDrawStage(); });
+
+  function ocrReset(){
+    ocr.img = null; ocr.crop = null; ocr.result = null; ocr.enhancedPreview = null; ocr.deskewed = 0; ocr.sel = null; ocr.runId++;
+    ocrWork.hidden = true; ocrDrop.hidden = false; ocrFile.value = "";
+    document.getElementById("ocrCropClear").hidden = true;
+    ocrHideStatus(); showMsg("ocrMsg", "", null);
+  }
+
+  function ocrSetImage(canvas){
+    ocr.img = canvas; ocr.crop = null; ocr.result = null; ocr.enhancedPreview = null; ocr.deskewed = 0; ocr.sel = null; ocr.runId++;
+    ocrDrop.hidden = true; ocrWork.hidden = false;
+    document.getElementById("ocrCropClear").hidden = true;
+    document.getElementById("ocrEmpty").hidden = false;
+    document.getElementById("ocrTablePane").hidden = true;
+    document.getElementById("ocrTextPane").hidden = true;
+    document.getElementById("ocrActions").hidden = true;
+    document.getElementById("ocrSummary").textContent = "";
+    requestAnimationFrame(ocrDrawStage);
+  }
+
+  async function ocrLoadFile(file){
+    if (!file) return;
+    try {
+      showMsg("ocrMsg", "", null);
+      ocrStatus("Opening image…", 0.02);
+      var c = await ocrDecodeFile(file);
+      ocrHideStatus();
+      ocrSetImage(c);
+      ocrRun();
+    } catch(err){
+      ocrHideStatus();
+      showMsg("ocrMsg", err && err.message ? err.message : String(err), false);
+    }
+  }
+
+  // ---- inputs: picker, drag & drop, paste (Ctrl+V) — anywhere on the page
+
+  ocrFile.addEventListener("change", function(){ if (ocrFile.files && ocrFile.files[0]) ocrLoadFile(ocrFile.files[0]); });
+  [ocrDrop, ocrStage].forEach(function(el){
+    el.addEventListener("dragover", function(e){ e.preventDefault(); ocrDrop.classList.add("drag"); });
+    el.addEventListener("dragleave", function(){ ocrDrop.classList.remove("drag"); });
+    el.addEventListener("drop", function(e){
+      e.preventDefault(); ocrDrop.classList.remove("drag");
+      var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) ocrLoadFile(f);
+    });
+  });
+
+  function clipboardImageOnly(e){
+    var cd = e.clipboardData; if (!cd) return null;
+    var text = cd.getData("text/plain");
+    if (text && text.trim()) return null; // copied from Excel etc. — let normal paste handle it
+    var items = cd.items || [];
+    for (var i = 0; i < items.length; i++){
+      if (items[i].kind === "file" && /^image\//.test(items[i].type)) return items[i].getAsFile();
+    }
+    return null;
+  }
+  document.addEventListener("paste", function(e){
+    var file = clipboardImageOnly(e);
+    if (!file) return;
+    var t = e.target, editingOcrCell = t && t.closest && t.closest("#ocrGrid");
+    if (editingOcrCell) return;
+    e.preventDefault(); e.stopPropagation();
+    if (importBackdrop.classList.contains("open")) closeImportModal();
+    openOcr();
+    ocrLoadFile(file);
+  }, true);
+
+  function openOcr(){
+    ocrBackdrop.classList.add("open");
+    closeSuggest();
+    // start fetching the engine in the background so it's ready by the time an image is chosen
+    ocrGetService(document.getElementById("ocrQuality").value === "fast" ? "fast" : "accurate").catch(function(){});
+    if (ocr.img) requestAnimationFrame(ocrDrawStage);
+  }
+  document.getElementById("ocrBtn").addEventListener("click", openOcr);
+  document.getElementById("closeOcr").addEventListener("click", function(){ ocrBackdrop.classList.remove("open"); });
+  ocrBackdrop.addEventListener("click", function(e){ if (e.target === ocrBackdrop) ocrBackdrop.classList.remove("open"); });
+
+  // ---- results: tabs, spreadsheet-style grid with selection, editing, copy
+
+  function ocrColName(i){ var s = ""; i++; while (i > 0){ var m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; }
+
+  function ocrRenderResult(){
+    var res = ocr.result; if (!res) return;
+    document.getElementById("ocrEmpty").hidden = true;
+    document.getElementById("ocrActions").hidden = false;
+    var rows = res.grid.length, cols = rows ? res.grid[0].length : 0, warn = 0, fixed = 0;
+    res.grid.forEach(function(row){ row.forEach(function(c){ if (c.warn) warn++; if (c.fixed) fixed++; }); });
+    document.getElementById("ocrSummary").textContent =
+      (res.kind === "text" ? rows + " line" + (rows === 1 ? "" : "s") : rows + " row" + (rows === 1 ? "" : "s") + " × " + cols + " column" + (cols === 1 ? "" : "s")) +
+      (warn ? " · " + warn + " to double-check" : "") + (fixed ? " · " + fixed + " auto-corrected" : "") +
+      " · " + (res.ms / 1000).toFixed(1) + "s" + (res.passes > 1 ? " (" + res.passes + " passes" + (res.blurry ? ", small or blurry text" : "") + ")" : "");
+    document.getElementById("ocrSummary").title = res.tableOnly ? "Found a table, so only the table was read. To read everything in the image, set \"Read as\" to Plain text and click Read text again." : "";
+    if (res.tableOnly) document.getElementById("ocrSummary").textContent += " · table only";
+    ocrTextEl.value = res.text;
+    ocrRenderGrid();
+    ocrShowTab(res.kind === "text" ? "text" : "table");
+    var total = 0; res.grid.forEach(function(row){ row.forEach(function(c){ if (c.text) total++; }); });
+    if (res.poor || (total >= 5 && warn / total > 0.45))
+      showMsg("ocrMsg", "This image is very small or blurry, so many words may be wrong (yellow cells). For a better result, zoom in before taking the screenshot, or use the original file / a sharper photo.", null);
+  }
+
+  function ocrRenderGrid(){
+    var g = ocr.result.grid, rows = g.length, cols = rows ? g[0].length : 0, h = "<thead><tr><th class=\"corner\" data-all=\"1\" title=\"Select all\"></th>";
+    for (var c = 0; c < cols; c++) h += "<th data-col=\"" + c + "\">" + ocrColName(c) + "</th>";
+    h += "</tr></thead><tbody>";
+    for (var r = 0; r < rows; r++){
+      h += "<tr><th class=\"rowh\" data-row=\"" + r + "\">" + (r + 1) + "</th>";
+      for (c = 0; c < cols; c++){
+        var cell = g[r][c], cls = (cell.warn ? "warn " : "") + (cell.fixed ? "fixed" : "");
+        h += "<td data-r=\"" + r + "\" data-c=\"" + c + "\" class=\"" + cls + "\"" + (cell.note ? " title=\"" + escapeAttr(cell.note) + "\"" : "") + ">" + escapeHtml(cell.text) + "</td>";
+      }
+      h += "</tr>";
+    }
+    ocrGridEl.innerHTML = h + "</tbody>";
+    ocrPaintSelection();
+  }
+
+  function ocrShowTab(tab){
+    document.querySelectorAll(".ocr-tab").forEach(function(b){ b.classList.toggle("active", b.getAttribute("data-tab") === tab); });
+    document.getElementById("ocrTablePane").hidden = tab !== "table";
+    document.getElementById("ocrTextPane").hidden = tab !== "text";
+  }
+  document.querySelectorAll(".ocr-tab").forEach(function(b){ b.addEventListener("click", function(){ if (ocr.result) ocrShowTab(b.getAttribute("data-tab")); }); });
+
+  function ocrNormSel(s){ return { r1: Math.min(s.r1, s.r2), r2: Math.max(s.r1, s.r2), c1: Math.min(s.c1, s.c2), c2: Math.max(s.c1, s.c2) }; }
+  function ocrSelectedCells(){
+    if (!ocr.sel || !ocr.result) return [];
+    var s = ocrNormSel(ocr.sel), out = [];
+    for (var r = s.r1; r <= s.r2; r++) for (var c = s.c1; c <= s.c2; c++){ var cell = ocr.result.grid[r] && ocr.result.grid[r][c]; if (cell) out.push(cell); }
+    return out;
+  }
+  function ocrPaintSelection(){
+    var s = ocr.sel ? ocrNormSel(ocr.sel) : null;
+    ocrGridEl.querySelectorAll("td").forEach(function(td){
+      var r = +td.getAttribute("data-r"), c = +td.getAttribute("data-c");
+      td.classList.toggle("sel", !!s && r >= s.r1 && r <= s.r2 && c >= s.c1 && c <= s.c2);
+    });
+    ocrGridEl.querySelectorAll("th[data-col]").forEach(function(th){ var c = +th.getAttribute("data-col"); th.classList.toggle("selh", !!s && c >= s.c1 && c <= s.c2); });
+    ocrGridEl.querySelectorAll("th[data-row]").forEach(function(th){ var r = +th.getAttribute("data-row"); th.classList.toggle("selh", !!s && r >= s.r1 && r <= s.r2); });
+    // "Add to booking sheet" sends just the selection when several cells are selected
+    document.getElementById("ocrToSheet").textContent = ocrSelectedCells().length > 1 ? "Add selected to booking sheet ➜" : "Add to booking sheet ➜";
+    ocrDrawOverlay();
+  }
+
+  function ocrCommitEdit(cancel){
+    var ed = ocr.editing; if (!ed) return;
+    ocr.editing = null;
+    ed.td.contentEditable = "false"; ed.td.classList.remove("editing");
+    var cell = ocr.result.grid[ed.r][ed.c];
+    if (cancel) ed.td.textContent = cell.text;
+    else if (ed.td.innerText !== cell.text){
+      cell.text = ed.td.innerText.replace(/\n$/, ""); cell.warn = false; cell.fixed = false; cell.note = "Edited by you";
+      ed.td.classList.remove("warn", "fixed"); ed.td.title = "Edited by you";
+    }
+    ocrGridWrap.focus();
+  }
+  function ocrStartEdit(td){
+    ocrCommitEdit();
+    ocr.editing = { td: td, r: +td.getAttribute("data-r"), c: +td.getAttribute("data-c") };
+    td.contentEditable = "true"; td.classList.add("editing"); td.focus();
+    var range = document.createRange(); range.selectNodeContents(td);
+    var s = window.getSelection(); s.removeAllRanges(); s.addRange(range);
+  }
+
+  ocrGridEl.addEventListener("mousedown", function(e){
+    if (!ocr.result) return;
+    var td = e.target.closest("td"), th = e.target.closest("th");
+    if (td && ocr.editing && ocr.editing.td === td) return;
+    ocrCommitEdit();
+    var rows = ocr.result.grid.length, cols = rows ? ocr.result.grid[0].length : 0;
+    if (td){
+      var r = +td.getAttribute("data-r"), c = +td.getAttribute("data-c");
+      if (e.shiftKey && ocr.anchor) ocr.sel = { r1: ocr.anchor.r, c1: ocr.anchor.c, r2: r, c2: c };
+      else { ocr.anchor = { r: r, c: c }; ocr.sel = { r1: r, c1: c, r2: r, c2: c }; }
+      ocr.dragging = true; e.preventDefault();
+    } else if (th){
+      if (th.hasAttribute("data-all")) ocr.sel = { r1: 0, c1: 0, r2: rows - 1, c2: cols - 1 };
+      else if (th.hasAttribute("data-col")){
+        var col = +th.getAttribute("data-col"), from = e.shiftKey && ocr.sel ? ocrNormSel(ocr.sel).c1 : col;
+        ocr.sel = { r1: 0, r2: rows - 1, c1: from, c2: col }; ocr.anchor = { r: 0, c: col };
+      } else if (th.hasAttribute("data-row")){
+        var row = +th.getAttribute("data-row"), fromR = e.shiftKey && ocr.sel ? ocrNormSel(ocr.sel).r1 : row;
+        ocr.sel = { r1: fromR, r2: row, c1: 0, c2: cols - 1 }; ocr.anchor = { r: row, c: 0 };
+      }
+      e.preventDefault();
+    }
+    ocrGridWrap.focus({ preventScroll: true });
+    ocrPaintSelection();
+  });
+  ocrGridEl.addEventListener("mouseover", function(e){
+    if (!ocr.dragging || !ocr.anchor) return;
+    var td = e.target.closest("td"); if (!td) return;
+    ocr.sel = { r1: ocr.anchor.r, c1: ocr.anchor.c, r2: +td.getAttribute("data-r"), c2: +td.getAttribute("data-c") };
+    ocrPaintSelection();
+  });
+  document.addEventListener("mouseup", function(){ ocr.dragging = false; });
+  ocrGridEl.addEventListener("dblclick", function(e){ var td = e.target.closest("td"); if (td) ocrStartEdit(td); });
+  ocrGridEl.addEventListener("focusout", function(e){ if (ocr.editing && e.target === ocr.editing.td) ocrCommitEdit(); });
+
+  ocrGridWrap.addEventListener("keydown", function(e){
+    if (!ocr.result) return;
+    var mod = e.ctrlKey || e.metaKey;
+    if (ocr.editing){
+      if (e.key === "Enter" && !e.shiftKey){ e.preventDefault(); ocrCommitEdit(); }
+      else if (e.key === "Escape"){ e.preventDefault(); ocrCommitEdit(true); }
+      return;
+    }
+    var rows = ocr.result.grid.length, cols = rows ? ocr.result.grid[0].length : 0;
+    if (mod && e.key.toLowerCase() === "c"){ e.preventDefault(); ocrCopySelection(); return; }
+    if (mod && e.key.toLowerCase() === "a"){ e.preventDefault(); ocr.sel = { r1: 0, c1: 0, r2: rows - 1, c2: cols - 1 }; ocrPaintSelection(); return; }
+    if (!ocr.sel) return;
+    if (e.key === "Delete" || e.key === "Backspace"){
+      e.preventDefault();
+      ocrSelectedCells().forEach(function(c){ c.text = ""; c.warn = false; c.fixed = false; c.note = ""; });
+      ocrRenderGrid(); return;
+    }
+    if (e.key === "Enter" || e.key === "F2"){
+      e.preventDefault();
+      var td = ocrGridEl.querySelector("td[data-r=\"" + ocr.sel.r2 + "\"][data-c=\"" + ocr.sel.c2 + "\"]");
+      if (td) ocrStartEdit(td); return;
+    }
+    var mv = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] }[e.key];
+    if (mv){
+      e.preventDefault();
+      var nr = Math.max(0, Math.min(rows - 1, ocr.sel.r2 + mv[0])), nc = Math.max(0, Math.min(cols - 1, ocr.sel.c2 + mv[1]));
+      if (e.shiftKey && ocr.anchor) ocr.sel = { r1: ocr.anchor.r, c1: ocr.anchor.c, r2: nr, c2: nc };
+      else { ocr.anchor = { r: nr, c: nc }; ocr.sel = { r1: nr, c1: nc, r2: nr, c2: nc }; }
+      ocrPaintSelection();
+      var cellEl = ocrGridEl.querySelector("td[data-r=\"" + nr + "\"][data-c=\"" + nc + "\"]");
+      if (cellEl) cellEl.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+  });
+
+  function ocrMatrix(sel){
+    var g = ocr.result.grid; if (!g.length) return [];
+    var s = sel ? ocrNormSel(sel) : { r1: 0, r2: g.length - 1, c1: 0, c2: g[0].length - 1 }, out = [];
+    for (var r = s.r1; r <= s.r2; r++){ var row = []; for (var c = s.c1; c <= s.c2; c++) row.push(g[r][c] ? g[r][c].text : ""); out.push(row); }
+    return out;
+  }
+  function ocrCellOut(v, keep){ return keep ? v : String(v).replace(/\s*\n\s*/g, " ").trim(); }
+  function ocrToTSV(m, keep){
+    return m.map(function(row){ return row.map(function(v){ v = ocrCellOut(v, keep); return /[\t\n"]/.test(v) ? "\"" + v.replace(/"/g, "\"\"") + "\"" : v; }).join("\t"); }).join("\n");
+  }
+  function ocrToHTML(m, keep){
+    return "<table>" + m.map(function(row){ return "<tr>" + row.map(function(v){ return "<td>" + escapeHtml(ocrCellOut(v, keep)).replace(/\n/g, "<br>") + "</td>"; }).join("") + "</tr>"; }).join("") + "</table>";
+  }
+  async function ocrWriteClipboard(plain, html){
+    try {
+      if (html && window.ClipboardItem && navigator.clipboard && navigator.clipboard.write){
+        await navigator.clipboard.write([new ClipboardItem({ "text/plain": new Blob([plain], { type: "text/plain" }), "text/html": new Blob([html], { type: "text/html" }) })]);
+        return true;
+      }
+      await navigator.clipboard.writeText(plain); return true;
+    } catch(e){
+      var ta = document.createElement("textarea"); ta.value = plain; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      var ok = false; try { ok = document.execCommand("copy"); } catch(e2){}
+      document.body.removeChild(ta); return ok;
+    }
+  }
+  async function ocrCopyMatrix(m, what){
+    if (!m.length){ ocrMsg("Nothing to copy — select some cells first.", false); return; }
+    var keep = document.getElementById("ocrKeepBreaks").checked;
+    var ok = await ocrWriteClipboard(ocrToTSV(m, keep), ocrToHTML(m, keep));
+    ocrMsg(ok ? "Copied " + what + " — paste it into Excel, email or the booking sheet." : "Copy was blocked by the browser — select the cells and press Ctrl + C instead.", ok);
+    ocrGridWrap.focus({ preventScroll: true });
+  }
+  function ocrCopySelection(){
+    if (!ocr.result) return;
+    if (!ocr.sel){ ocrCopyMatrix(ocrMatrix(null), "the whole table"); return; }
+    var s = ocrNormSel(ocr.sel), m = ocrMatrix(ocr.sel);
+    ocrCopyMatrix(m, (s.r2 - s.r1 + 1) + " row" + (s.r2 === s.r1 ? "" : "s") + " × " + (s.c2 - s.c1 + 1) + " column" + (s.c2 === s.c1 ? "" : "s"));
+  }
+  document.getElementById("ocrCopySel").addEventListener("click", ocrCopySelection);
+  document.getElementById("ocrCopyAll").addEventListener("click", function(){ if (ocr.result) ocrCopyMatrix(ocrMatrix(null), "the whole table"); });
+  document.getElementById("ocrCopyText").addEventListener("click", async function(){
+    if (!ocr.result) return;
+    var ok = await ocrWriteClipboard(ocrTextEl.value, null);
+    ocrMsg(ok ? "Copied the text." : "Copy was blocked — select the text and press Ctrl + C.", ok);
+  });
+  document.getElementById("ocrKeepBreaks").addEventListener("change", function(){ ocrGridWrap.focus({ preventScroll: true }); });
+
+  document.getElementById("ocrDelRows").addEventListener("click", function(){
+    if (!ocr.result || !ocr.sel){ ocrMsg("Select the row(s) to delete first — click the row numbers on the left.", false); return; }
+    var s = ocrNormSel(ocr.sel); ocr.result.grid.splice(s.r1, s.r2 - s.r1 + 1); ocr.sel = null; ocrRenderGrid(); ocrRenderSummaryOnly();
+  });
+  document.getElementById("ocrDelCols").addEventListener("click", function(){
+    if (!ocr.result || !ocr.sel){ ocrMsg("Select the column(s) to delete first — click the letters at the top.", false); return; }
+    var s = ocrNormSel(ocr.sel); ocr.result.grid.forEach(function(row){ row.splice(s.c1, s.c2 - s.c1 + 1); });
+    if (ocr.result.grid.length && !ocr.result.grid[0].length) ocr.result.grid = [];
+    ocr.sel = null; ocrRenderGrid(); ocrRenderSummaryOnly();
+  });
+  function ocrRenderSummaryOnly(){
+    var g = ocr.result.grid, rows = g.length, cols = rows ? g[0].length : 0;
+    document.getElementById("ocrSummary").textContent = rows + " row" + (rows === 1 ? "" : "s") + " × " + cols + " column" + (cols === 1 ? "" : "s");
+  }
+
+  document.getElementById("ocrDlCsv").addEventListener("click", function(){
+    if (!ocr.result) return;
+    var m = ocrMatrix(null), keep = document.getElementById("ocrKeepBreaks").checked;
+    var csv = m.map(function(row){ return row.map(function(v){ return csvCell(ocrCellOut(v, keep)); }).join(","); }).join("\r\n");
+    triggerDownload(new Blob(["﻿" + csv], { type: "text/csv" }), "ocr-table.csv");
+  });
+  document.getElementById("ocrDlXlsx").addEventListener("click", function(){
+    if (!ocr.result) return;
+    var keep = document.getElementById("ocrKeepBreaks").checked;
+    var m = ocrMatrix(null).map(function(row){ return row.map(function(v){ return ocrCellOut(v, keep); }); });
+    var wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(m), "OCR");
+    triggerDownload(new Blob([XLSX.write(wb, { type: "array", bookType: "xlsx" })], { type: "application/octet-stream" }), "ocr-table.xlsx");
+  });
+
+  // hand the table to the existing Paste-table importer, which already maps columns to fields
+  document.getElementById("ocrToSheet").addEventListener("click", function(){
+    if (!ocr.result) return;
+    var m = ocr.sel && ocrSelectedCells().length > 1 ? ocrMatrix(ocr.sel) : ocrMatrix(null);
+    if (!m.length){ ocrMsg("There's nothing to add yet.", false); return; }
+    var tsv = m.map(function(row){ return row.map(function(v){ return ocrCellOut(v, false).replace(/\t/g, " "); }).join("\t"); }).join("\n");
+    var headerHits = m[0].filter(function(v){ return v && guessFieldFromHeader(v); }).length;
+    ocrBackdrop.classList.remove("open");
+    importBackdrop.classList.add("open");
+    importText.value = tsv;
+    importHasHeader.checked = headerHits >= 1;
+    parseImportText();
   });
 
   // ---------- fixed top/bottom bars ----------
