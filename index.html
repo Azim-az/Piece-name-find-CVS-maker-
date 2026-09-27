@@ -308,6 +308,13 @@ document.addEventListener("error", function(e){
   /* ---------- OCR ---------- */
   .ocr-panel{max-width:1320px;width:100%;}
   .ocr-panel [hidden]{display:none !important;}
+  .ocr-panel.fullscreen{max-width:none;width:calc(100vw - 32px);}
+  .ocr-panel.fullscreen .ocr-stage{max-height:72vh;}
+  .ocr-panel.fullscreen .ocr-grid-wrap{max-height:72vh;}
+  .ocr-panel.fullscreen #ocrText{min-height:72vh;}
+  .ocr-zoom-group{display:flex;align-items:center;gap:2px;margin-left:auto;}
+  .ocr-zoom-group .btn{padding:6px 11px;}
+  .ocr-zoom-label{font-size:11.5px;color:var(--text-muted);min-width:38px;text-align:center;}
   .ocr-drop{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center;
     border:2px dashed var(--border);border-radius:12px;padding:44px 20px;cursor:pointer;color:var(--text-muted);font-size:13px;background:var(--bg);
     transition:border-color .15s ease, background .15s ease;}
@@ -328,8 +335,8 @@ document.addEventListener("error", function(e){
   #ocrRun{margin-left:auto;}
   .ocr-stage{position:relative;border:1px solid var(--border);border-radius:10px;overflow:auto;max-height:56vh;background:
     repeating-conic-gradient(var(--surface-2) 0 25%, var(--surface) 0 50%) 0 0/16px 16px;}
-  .ocr-stage canvas{display:block;width:100%;height:auto;}
-  #ocrOverlay{position:absolute;inset:0;pointer-events:none;}
+  .ocr-stage canvas{display:block;width:calc(var(--ocr-zoom, 1) * 100%);height:auto;}
+  #ocrOverlay{position:absolute;top:0;left:0;pointer-events:none;}
   .ocr-stage.cropping{cursor:crosshair;}
   .ocr-sel{position:absolute;border:2px solid var(--accent);background:color-mix(in srgb, var(--accent) 12%, transparent);pointer-events:none;border-radius:2px;}
   .ocr-stage-hint{font-size:11.5px;color:var(--text-muted);}
@@ -675,6 +682,7 @@ document.addEventListener("error", function(e){
 
 <div class="backdrop" id="ocrBackdrop">
   <div class="panel ocr-panel">
+    <button class="close-x" id="ocrFullscreen" style="right:52px;" title="Full screen">⛶</button>
     <button class="close-x" id="closeOcr">✕</button>
     <h2>📷 Image to text (OCR)</h2>
     <div class="desc">Read a table or text from a photo, scan or screenshot — even blurry or low-resolution ones. Everything runs on this computer; your image is never uploaded anywhere.</div>
@@ -694,6 +702,12 @@ document.addEventListener("error", function(e){
           <button class="btn small" id="ocrCropBtn" title="Drag a box around just the part you want read">✂ Select area</button>
           <button class="btn small" id="ocrCropClear" hidden>Use whole image</button>
           <button class="btn small" id="ocrNewImg">Change image</button>
+          <div class="ocr-zoom-group">
+            <button class="btn small" id="ocrZoomOut" title="Zoom out">−</button>
+            <span class="ocr-zoom-label" id="ocrZoomLabel">100%</span>
+            <button class="btn small" id="ocrZoomIn" title="Zoom in">+</button>
+            <button class="btn small" id="ocrZoomReset" title="Fit to width">Fit</button>
+          </div>
         </div>
         <div class="ocr-stage" id="ocrStage">
           <canvas id="ocrCanvas"></canvas>
@@ -737,6 +751,8 @@ document.addEventListener("error", function(e){
           <div class="ocr-grid-tools">
             <button class="btn small" id="ocrCopySel">Copy selected</button>
             <button class="btn small" id="ocrCopyAll">Copy whole table</button>
+            <button class="btn small" id="ocrAddRow">+ Add row</button>
+            <button class="btn small" id="ocrAddCol">+ Add column</button>
             <button class="btn small" id="ocrDelRows">Delete rows</button>
             <button class="btn small" id="ocrDelCols">Delete columns</button>
             <label class="ocr-check"><input type="checkbox" id="ocrKeepBreaks"> Keep line breaks in cells</label>
@@ -2130,7 +2146,7 @@ document.addEventListener("error", function(e){
     mod: null, servicePromises: {},
     img: null, crop: null, enhancedPreview: null,
     result: null, sel: null, anchor: null, dragging: false, editing: null,
-    cropping: false, cropStart: null, busy: false, runId: 0, codeIndex: null
+    cropping: false, cropStart: null, busy: false, runId: 0, codeIndex: null, zoom: 1
   };
 
   function ocrStatus(text, frac){
@@ -2794,6 +2810,40 @@ document.addEventListener("error", function(e){
     return { grid: grid, isTable: merged.length >= 2 && lines.length >= 2 && multi / lines.length >= 0.5 };
   }
 
+  // last-resort 2-column split for label/value photos with no visible border and too
+  // small a label-value gap for the whitespace method above to isolate as a column:
+  // find each row's single biggest internal gap, and vote the boundary position
+  // across rows (a couple of rows guessing wrong — e.g. a stray mark far to the
+  // right — doesn't move a median much)
+  function ocrSplitTwoColumns(items, textH){
+    var lines = ocrGroupLines(items, textH).filter(function(l){ return l.items.length; });
+    if (lines.length < 3) return null;
+    var candidates = [];
+    lines.forEach(function(l){
+      var arr = l.items, bestGap = 0, bestX = null;
+      for (var i = 1; i < arr.length; i++){
+        var gap = arr[i].x - (arr[i - 1].x + arr[i - 1].w);
+        if (gap > bestGap){ bestGap = gap; bestX = arr[i - 1].x + arr[i - 1].w + gap / 2; }
+      }
+      if (bestX !== null && bestGap > Math.max(textH * 0.6, 6)) candidates.push(bestX);
+    });
+    if (candidates.length < Math.max(2, lines.length * 0.35)) return null;
+    candidates.sort(function(a, b){ return a - b; });
+    var boundary = candidates[Math.floor(candidates.length / 2)];
+    var minX = Infinity, maxX = 0;
+    items.forEach(function(it){ minX = Math.min(minX, it.x); maxX = Math.max(maxX, it.x + it.w); });
+    if (boundary <= minX + textH || boundary >= maxX - textH) return null;
+    var grid = lines.map(function(l){
+      var a = [], b = [];
+      l.items.forEach(function(it){ (it.x + it.w / 2 < boundary ? a : b).push(it); });
+      var cA = ocrCellFromItems(a, textH, null), cB = ocrCellFromItems(b, textH, null);
+      cA._textH = textH; cB._textH = textH;
+      return [cA, cB];
+    });
+    var both = grid.filter(function(row){ return row[0].text && row[1].text; }).length;
+    return both >= 2 ? grid : null;
+  }
+
   function ocrPlainText(items, textH){
     return ocrGroupLines(items, textH).map(function(l){
       var s = "", prev = null;
@@ -2988,6 +3038,16 @@ document.addEventListener("error", function(e){
         var cl = ocrClusterTable(items, textH);
         if (cl.isTable || mode === "table"){ grid = cl.grid; kind = "columns"; grid.forEach(function(row){ row.forEach(function(c){ c._textH = textH; }); }); }
       }
+      // last resort — label/value cards (a product tag, a spec sheet) photographed at
+      // an angle or under glare often have no border the grid detector can see (or
+      // only the outer edge of the table survives, which looks like one wide column,
+      // not two), and the label sits too close to its value for the whitespace method
+      // to find a column either; but most rows still have ONE clear gap somewhere, and
+      // its position — voted across rows — is the column boundary
+      if (kind === "text" || (grid.length && grid[0].length === 1)){
+        var two = ocrSplitTwoColumns(items, textH);
+        if (two){ grid = two; kind = "columns"; }
+      }
     }
     if (kind === "text"){
       grid = ocrGroupLines(items, textH).map(function(l){ var cell = ocrCellFromItems(l.items, textH, null); cell._textH = textH; return [cell]; });
@@ -3167,7 +3227,14 @@ document.addEventListener("error", function(e){
     if (!ocr.img) return;
     var src = ocr.img;
     if (ocrOverlay.width !== src.width || ocrOverlay.height !== src.height){ ocrOverlay.width = src.width; ocrOverlay.height = src.height; }
-    var o = ocrOverlay.getContext("2d"), rect = ocrCanvas.getBoundingClientRect();
+    var rect = ocrCanvas.getBoundingClientRect();
+    // sized to the canvas's actual on-screen box (not CSS inset:0, which — once the
+    // image is taller than the scrolling stage, or zoomed in past it — would clamp to
+    // the visible viewport instead of the full scrollable image and throw every
+    // highlight box off)
+    ocrOverlay.style.width = rect.width + "px";
+    ocrOverlay.style.height = rect.height + "px";
+    var o = ocrOverlay.getContext("2d");
     var px = rect.width ? src.width / rect.width : 1;
     o.clearRect(0, 0, src.width, src.height);
     var cr = ocr.cropDraft || ocr.crop;
@@ -3244,6 +3311,24 @@ document.addEventListener("error", function(e){
   document.getElementById("ocrNewImg").addEventListener("click", function(){ ocrReset(); ocrFile.click(); });
   window.addEventListener("resize", function(){ if (ocrBackdrop.classList.contains("open")) ocrDrawStage(); });
 
+  function ocrSetZoom(z){
+    ocr.zoom = Math.max(0.5, Math.min(4, +z.toFixed(2)));
+    ocrStage.style.setProperty("--ocr-zoom", ocr.zoom);
+    document.getElementById("ocrZoomLabel").textContent = Math.round(ocr.zoom * 100) + "%";
+    // wait for the resized canvas to actually lay out before re-measuring it
+    requestAnimationFrame(ocrDrawOverlay);
+  }
+  document.getElementById("ocrZoomIn").addEventListener("click", function(){ ocrSetZoom(ocr.zoom + 0.25); });
+  document.getElementById("ocrZoomOut").addEventListener("click", function(){ ocrSetZoom(ocr.zoom - 0.25); });
+  document.getElementById("ocrZoomReset").addEventListener("click", function(){ ocrSetZoom(1); });
+
+  document.getElementById("ocrFullscreen").addEventListener("click", function(){
+    var full = document.querySelector(".ocr-panel").classList.toggle("fullscreen");
+    this.textContent = full ? "⤢" : "⛶";
+    this.title = full ? "Exit full screen" : "Full screen";
+    requestAnimationFrame(ocrDrawOverlay);
+  });
+
   function ocrReset(){
     ocr.img = null; ocr.crop = null; ocr.result = null; ocr.enhancedPreview = null; ocr.deskewed = 0; ocr.sel = null; ocr.runId++;
     ocrWork.hidden = true; ocrDrop.hidden = false; ocrFile.value = "";
@@ -3253,6 +3338,7 @@ document.addEventListener("error", function(e){
 
   function ocrSetImage(canvas){
     ocr.img = canvas; ocr.crop = null; ocr.result = null; ocr.enhancedPreview = null; ocr.deskewed = 0; ocr.sel = null; ocr.runId++;
+    ocrSetZoom(1);
     ocrDrop.hidden = true; ocrWork.hidden = false;
     document.getElementById("ocrCropClear").hidden = true;
     document.getElementById("ocrEmpty").hidden = false;
@@ -3537,6 +3623,30 @@ document.addEventListener("error", function(e){
     var s = ocrNormSel(ocr.sel); ocr.result.grid.forEach(function(row){ row.splice(s.c1, s.c2 - s.c1 + 1); });
     if (ocr.result.grid.length && !ocr.result.grid[0].length) ocr.result.grid = [];
     ocr.sel = null; ocrRenderGrid(); ocrRenderSummaryOnly();
+  });
+  function ocrEmptyCell(){ return { text: "", items: [], rect: null, warn: false, fixed: false, note: "" }; }
+  // Outlook/Excel-style add row & column — appends a blank one at the end (or right
+  // after the current selection, if there is one) and selects its first cell so you
+  // can start typing immediately
+  document.getElementById("ocrAddRow").addEventListener("click", function(){
+    if (!ocr.result || !ocr.result.grid.length) return;
+    var cols = ocr.result.grid[0].length;
+    var at = ocr.sel ? ocrNormSel(ocr.sel).r2 + 1 : ocr.result.grid.length;
+    var row = []; for (var c = 0; c < cols; c++) row.push(ocrEmptyCell());
+    ocr.result.grid.splice(at, 0, row);
+    ocr.sel = { r1: at, c1: 0, r2: at, c2: 0 }; ocr.anchor = { r: at, c: 0 };
+    ocrRenderGrid(); ocrRenderSummaryOnly();
+    var td = ocrGridEl.querySelector('td[data-r="' + at + '"][data-c="0"]');
+    if (td) td.scrollIntoView({ block: "nearest" });
+  });
+  document.getElementById("ocrAddCol").addEventListener("click", function(){
+    if (!ocr.result || !ocr.result.grid.length) return;
+    var at = ocr.sel ? ocrNormSel(ocr.sel).c2 + 1 : ocr.result.grid[0].length;
+    ocr.result.grid.forEach(function(row){ row.splice(at, 0, ocrEmptyCell()); });
+    ocr.sel = { r1: 0, c1: at, r2: 0, c2: at }; ocr.anchor = { r: 0, c: at };
+    ocrRenderGrid(); ocrRenderSummaryOnly();
+    var td = ocrGridEl.querySelector('td[data-r="0"][data-c="' + at + '"]');
+    if (td) td.scrollIntoView({ block: "nearest", inline: "nearest" });
   });
   function ocrRenderSummaryOnly(){
     var g = ocr.result.grid, rows = g.length, cols = rows ? g[0].length : 0;
